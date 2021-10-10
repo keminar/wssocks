@@ -57,42 +57,33 @@ func (q *link) Send(hub *LinkHub) error {
 	}()
 	// 设置为开始发送
 	q.status = StaSend
+
 	for {
 		// 用于循环中的退出
 		if q.status == StaClose {
 			return io.ErrClosedPipe
 		}
 		for _, id := range q.sorted {
-			q := hub.Get(id)
-			if q != nil {
-				var conn *net.TCPConn
-				if id == q.master {
-					conn = q.conn
-				} else {
-					mq := hub.Get(q.master)
-					if mq != nil {
-						conn = mq.conn
-					}
-				}
-				b, err := readWithTimeout(q.buffer, expFiveMinute)
+			s := hub.Get(id)
+			if s != nil {
+				b, err := readWithTimeout(s.buffer, expFiveMinute)
 				if err != nil {
 					return err
 				}
-				if b.eof {
-					//fmt.Println("link send eof")
-					// 发送关闭写请求
-					conn.CloseWrite()
-					return nil
-				}
-				if conn != nil {
+				if q.conn != nil {
+					if b.eof {
+						//fmt.Println("link send eof")
+						// 发送关闭写请求
+						q.conn.CloseWrite()
+						return nil
+					}
 					pipePrintln("link.send from:", id, "data:", string(b.data))
-					_, e := conn.Write(b.data)
+					_, e := q.conn.Write(b.data)
 					if e != nil {
 						pipePrintln("link.send write", e.Error())
 						return e
 					}
 				} else {
-					pipePrintln(id, "link.send conn not found")
 					return errors.New("conn not found")
 				}
 			} else {
