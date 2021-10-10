@@ -3,6 +3,7 @@ package pipe
 // 将收到的数据先放到buffer，再异步写入多个向外的连接(writer)
 
 import (
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -38,22 +39,22 @@ func (q *queue) SetSort(sort []ksuid.KSUID) {
 
 // 写入缓冲区
 func (q *queue) Write(data []byte) (n int, err error) {
-	defer func() {
-		// 捕获异常
-		if err := recover(); err != nil {
-			pipePrintln("queue.writer recover", err)
-			return
-		}
-	}()
-	//pipePrintln("write to chan", q.id, string(buffer))
 	b := make([]byte, len(data))
 	copy(b, data)
-	q.buffer <- buffer{eof: false, data: b}
-	//pipePrintln("write ok", string(buffer))
-	return len(data), nil
+	return q.writeBuf(buffer{eof: false, data: b})
 }
 
+// 发送EOF
 func (q *queue) WriteEOF() {
+	q.writeBuf(buffer{eof: true, data: []byte{}})
+}
+
+// 基础方法
+func (q *queue) writeBuf(b buffer) (int, error) {
+	if q.status == StaDone {
+		return 0, errors.New("send is over")
+	}
+
 	defer func() {
 		// 捕获异常
 		if err := recover(); err != nil {
@@ -61,16 +62,22 @@ func (q *queue) WriteEOF() {
 			return
 		}
 	}()
-	q.buffer <- buffer{eof: true, data: []byte{}}
+	select {
+	case <-time.After(expFiveMinute):
+		return 0, errors.New("write timeout")
+	case q.buffer <- b:
+	}
+	return len(b.data), nil
 }
 
 // 从缓冲区读取并发送到各个连接
 func (q *queue) Send() error {
 	// 如果已经在发送，返回
-	if q.status == StaSend {
+	if q.status == StaSend || q.status == StaDone {
 		return nil
 	}
 	defer func() {
+		q.status = StaDone
 		q.done <- struct{}{}
 		close(q.done)
 	}()
@@ -83,7 +90,7 @@ func (q *queue) Send() error {
 		}
 		for _, id := range q.sorted {
 			w := q.writers[id]
-			b, err := readWithTimeout(q.buffer, expTenMinute)
+			b, err := readWithTimeout(q.buffer, expFiveMinute)
 			if err != nil {
 				return err
 			}

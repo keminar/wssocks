@@ -148,11 +148,15 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	for i, w := range wsc {
 		// create a with proxy with callback func
 		p := w.NewProxy(func(id ksuid.KSUID, data ServerData) { //ondata 接收数据回调
+			link := clientLinkHub.Get(id)
+			if link == nil {
+				return
+			}
 			if data.Tag == TagData {
-				clientLinkHub.Write(id, data.Data)
+				link.Write(data.Data)
 			} else if data.Tag == TagEOF {
 				//fmt.Println("client receive eof")
-				clientLinkHub.Get(id).WriteEOF()
+				link.WriteEOF()
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed
 			//服务器出错让关闭，关闭双向的通道
@@ -195,6 +199,9 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 
 	//发送数据
 	qq := clientQueueHub.Get(masterID)
+	if qq == nil {
+		return errors.New("queue not found")
+	}
 	// 设置发送顺序
 	qq.SetSort(sorted)
 	go qq.Send()
@@ -208,6 +215,9 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 
 	//接收数据
 	oo := clientLinkHub.Get(masterID)
+	if oo == nil {
+		return errors.New("link not found")
+	}
 	// 设置接收的数据发送到哪
 	oo.SetConn(conn)
 	oo.SetSort(sorted)
