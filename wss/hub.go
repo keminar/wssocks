@@ -62,6 +62,15 @@ func (h *Hub) GetConnectorSize() int {
 	return len(h.connPool)
 }
 
+// Close proxy connection with remote host.
+// It can be called when receiving tell close message from client
+func (h *Hub) CloseProxyConn(id ksuid.KSUID) error {
+	if proxy := h.GetProxyById(id); proxy != nil {
+		return proxy.ProxyIns.Close(id) // todo remove proxy here
+	}
+	return nil
+}
+
 func (h *Hub) RemoveProxy(id ksuid.KSUID) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
