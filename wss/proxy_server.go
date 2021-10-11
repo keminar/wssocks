@@ -25,6 +25,10 @@ func init() {
 	serverLinkHub = pipe.NewLinkHub()
 }
 
+func StaticServer() (int, int) {
+	return serverQueueHub.Len(), serverLinkHub.Len()
+}
+
 type Connector struct {
 	Conn io.ReadWriteCloser
 }
