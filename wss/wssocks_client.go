@@ -142,22 +142,23 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 	}
 }
 
-// 释放资源
-func (client *Client) remove(id ksuid.KSUID) {
-	if client.status == "removed" {
-		return
-	}
-	client.status = "removed"
-	clientQueueHub.Remove(id)
-	clientLinkHub.RemoveAll(id)
-}
-
 // 传输数据
 func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, firstSendData []byte, addr string) error {
 	var masterProxy *ProxyClient
 	var masterWsc *WebSocketClient
 	var masterID ksuid.KSUID
 	var sorted []ksuid.KSUID
+
+	var status = ""
+	// 单次释放资源，因为client类对多次请求是共享的，所以不能用它的方法实现。这里定义个局部函数
+	remove := func(id ksuid.KSUID) {
+		if status == "removed" {
+			return
+		}
+		status = "removed"
+		clientQueueHub.Remove(id)
+		clientLinkHub.RemoveAll(id)
+	}
 	for i, w := range wsc {
 		// create a with proxy with callback func
 		p := w.NewProxy(func(id ksuid.KSUID, data ServerData) { //ondata 接收数据回调
@@ -173,7 +174,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
 			//服务器出错让关闭，关闭双向的通道, 结束wait等待
-			client.remove(id)
+			remove(id)
 		}, func(id ksuid.KSUID, err error) { //onerror
 		})
 		defer w.RemoveProxy(p.Id)
@@ -198,8 +199,8 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		clientQueueHub.Add(masterID, p.Id, writer)
 		clientLinkHub.Add(p.Id, masterID)
 	}
-
-	defer client.remove(masterID)
+	// 删除map中数据
+	defer remove(masterID)
 
 	// 告知服务端目标地址和协议，还有首次发送的数据包, 额外告知有几路以及顺序如何
 	// 第二到N条线路不需要Establish因为不用和目标机器连接
