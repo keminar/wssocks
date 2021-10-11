@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/genshen/wssocks/pipe"
 	"github.com/segmentio/ksuid"
@@ -215,10 +216,15 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	}
 	// 设置发送顺序
 	qq.SetSort(sorted)
-	go qq.Send()
+
+	logTag := addr + ":" + masterID.String()
+	go func() {
+		qq.Send()
+		log.Debug(time.Now(), fmt.Sprintf(" %s send request done\n", logTag))
+	}()
 
 	go func() {
-		_, err := pipe.CopyBuffer(qq, conn) //io.Copy(qq, conn)
+		_, err := pipe.CopyBuffer(qq, conn, logTag) //io.Copy(qq, conn)
 		if err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
 				log.Error("copy error: ", err)
@@ -226,6 +232,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			// 发送Close给server，只给主连接发送就行
 			masterWsc.TellClose(masterID)
 		}
+		log.Debug(time.Now(), fmt.Sprintf(" %s copy request done err=", logTag), err)
 	}()
 
 	//接收数据
@@ -236,13 +243,16 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	// 设置接收的数据发送到哪
 	oo.SetConn(conn)
 	oo.SetSort(sorted)
-	go oo.Send(clientLinkHub)
+	go func() {
+		oo.Send(clientLinkHub)
+		log.Debug(time.Now(), fmt.Sprintf(" %s get response done\n", logTag))
+	}()
 
 	//fmt.Println(clientLinkHub.Len(), clientQueueHub.Len())
 	//time.Sleep(time.Minute)
 	//fmt.Println("wait")
 	oo.Wait()
-	//fmt.Println("done")
+	log.Debug(time.Now(), fmt.Sprintf(" %s all done\n", logTag))
 	return nil
 }
 

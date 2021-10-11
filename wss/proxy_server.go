@@ -190,7 +190,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if writer != nil {
 		go func() {
 			// 从外面往回接收数据
-			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn))
+			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn), addr)
 			if err != nil {
 				if strings.Contains(err.Error(), "connection reset by peer") {
 				} else if strings.Contains(err.Error(), "use of closed network connection") {

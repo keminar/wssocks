@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // 是否打开调试日志
@@ -15,6 +17,8 @@ var pipeDebug bool = false
 var expHour time.Duration = time.Duration(1) * time.Hour
 var expMinute time.Duration = time.Duration(1) * time.Minute
 var expFiveMinute time.Duration = time.Duration(5) * time.Minute
+
+var copySlowLog bool = true
 
 // 状态值
 const (
@@ -35,7 +39,7 @@ type buffer struct {
 }
 
 // CopyBuffer 传输数据
-func CopyBuffer(pw PipeWriter, conn *net.TCPConn) (written int64, err error) {
+func CopyBuffer(pw PipeWriter, conn *net.TCPConn, addr string) (written int64, err error) {
 	//如果设置过大会耗内存高，4k比较合理
 	size := 4 * 1024
 	if pipeDebug {
@@ -45,12 +49,22 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn) (written int64, err error) {
 	i := 0
 	for {
 		i++
+		s1 := time.Now()
 		nr, er := conn.Read(buf)
+		diff := time.Since(s1)
+		if copySlowLog && diff > time.Duration(1)*time.Second {
+			log.Debug(time.Now(), fmt.Sprintf(" %s read %d cost ", addr, nr), diff)
+		}
 		if nr > 0 {
 			//fmt.Println("copy read", nr)
 			var nw int
 			var ew error
+			s1 := time.Now()
 			nw, ew = pw.Write(buf[0:nr])
+			diff := time.Since(s1)
+			if copySlowLog && diff > time.Duration(1)*time.Second {
+				log.Debug(time.Now(), fmt.Sprintf(" %s write %d cost ", addr, nr), diff)
+			}
 			if nw > 0 {
 				written += int64(nw)
 			}
