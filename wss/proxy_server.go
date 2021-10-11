@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -161,6 +162,10 @@ func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
 
 // data: data send in establish step (can be nil).
 func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data []byte) error {
+	// 安全检查addr或addr的解析地址不能为私有地址等
+	if checkAddrPrivite(addr) {
+		return errors.New("visit privite network, dial deny")
+	}
 	conn, err := net.DialTimeout("tcp", addr, time.Second*8) // todo config timeout
 	if err != nil {
 		return err
@@ -186,7 +191,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 				if strings.Contains(err.Error(), "connection reset by peer") {
 				} else if strings.Contains(err.Error(), "use of closed network connection") {
 				} else {
-					log.Error("write error: ", err)
+					log.Error("copy error: ", err)
 				}
 				// 这里不用告知客户端关闭，统一由establishProxy函数处理
 			}
