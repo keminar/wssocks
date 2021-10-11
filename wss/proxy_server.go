@@ -186,7 +186,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 				if strings.Contains(err.Error(), "connection reset by peer") {
 				} else if strings.Contains(err.Error(), "use of closed network connection") {
 				} else {
-					log.Error("write error: ", err)
+					log.Error("copy error: ", err)
 				}
 				// 这里不用告知客户端关闭，统一由establishProxy函数处理
 			}

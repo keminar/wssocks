@@ -220,7 +220,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		_, err := pipe.CopyBuffer(qq, conn) //io.Copy(qq, conn)
 		if err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
-				log.Error("write error: ", err)
+				log.Error("copy error: ", err)
 			}
 			// 发送Close给server，只给主连接发送就行
 			masterWsc.TellClose(masterID)
