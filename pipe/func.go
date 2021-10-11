@@ -76,6 +76,23 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn) (written int64, err error) {
 	return written, err
 }
 
+// 带保护写，防止conn变nil时退出
+func safeWrite(conn *net.TCPConn, data []byte, closeWrite bool) (n int, err error) {
+	defer func() {
+		if err := recover(); err != nil {
+			return
+		}
+	}()
+	if conn == nil {
+		return 0, errors.New("conn is closed")
+	}
+	if closeWrite {
+		err = conn.CloseWrite()
+		return 0, err
+	}
+	return conn.Write(data)
+}
+
 // 带有超时的读
 func readWithTimeout(b chan buffer, exp time.Duration) (buffer, error) {
 	for {

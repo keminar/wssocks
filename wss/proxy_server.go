@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/genshen/wssocks/pipe"
@@ -69,7 +69,7 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 	switch socketStream.Type {
 	case WsTpBeats: // heart beats
 	case WsTpClose: // closed by client
-		// 应该永远走不到这里，目前不需要客户端传close给服务端
+		return hub.CloseProxyConn(id)
 	case WsTpHi:
 		var masterID ksuid.KSUID
 		if err := json.Unmarshal(socketData, &masterID); err != nil {
@@ -79,7 +79,7 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 
 		serverQueueHub.Add(masterID, id, writer)
 		serverLinkHub.Add(id, masterID)
-		//fmt.Println("get client say", id, masterID)
+		//fmt.Println(time.Now(), "get client say", id, masterID)
 	case WsTpEst: // establish 收到连接请求
 		var proxyEstMsg ProxyEstMessage
 		if err := json.Unmarshal(socketData, &proxyEstMsg); err != nil {
@@ -108,7 +108,10 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 		}
 		link := serverLinkHub.Get(id)
 		if link == nil {
-			return errors.New("link not found")
+			// 远程请求的服务器主动断开，establish函数结束，连接已经被主连接释放
+			// 此时客户端还来数据包则会到此, 不算出错
+			//fmt.Println(time.Now(), id, requestMsg.Tag, "link not found")
+			return nil
 		}
 		if requestMsg.Tag == TagEOF { //设置收到io.EOF结束符
 			//fmt.Println("server receive eof")
@@ -133,17 +136,24 @@ func establishProxy(hub *Hub, proxyMeta ProxyRegister) {
 	e = &DefaultProxyEst{}
 
 	err := e.establish(hub, proxyMeta.id, proxyMeta.addr, proxyMeta.withData)
-	if err == nil {
-		// 当连接后端服务器失败时，让客户端断开
-		hub.tellClosed(proxyMeta.id) // tell client to close connection.
+	if err != nil {
+		log.Info(fmt.Sprintf("establish %s %s\n", proxyMeta.addr, err.Error()))
 	}
+	// 与后端服务器交互结束，让客户端断开
+	hub.tellClosed(proxyMeta.id) // tell client to close connection.
 }
 
 // interface implementation for socks5 and https proxy.
 type DefaultProxyEst struct {
+	status string
 }
 
 func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
+	if e.status == "closed" {
+		return nil
+	}
+	e.status = "closed"
+	//fmt.Println(time.Now(), "close", id)
 	serverLinkHub.RemoveAll(id)
 	serverQueueHub.Remove(id)
 	return nil
@@ -173,7 +183,12 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 			// 从外面往回接收数据
 			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn))
 			if err != nil {
-				log.Error("copy error,", err)
+				if strings.Contains(err.Error(), "connection reset by peer") {
+				} else if strings.Contains(err.Error(), "use of closed network connection") {
+				} else {
+					log.Error("write error: ", err)
+				}
+				// 这里不用告知客户端关闭，统一由establishProxy函数处理
 			}
 		}()
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/genshen/wssocks/pipe"
@@ -28,6 +29,7 @@ type Client struct {
 	stop    chan interface{}
 	closed  bool
 	wgClose sync.WaitGroup // wait for closing
+	status  string         //资源释放状态
 }
 
 func NewClient() *Client {
@@ -140,9 +142,20 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 	}
 }
 
+// 释放资源
+func (client *Client) remove(id ksuid.KSUID) {
+	if client.status == "removed" {
+		return
+	}
+	client.status = "removed"
+	clientQueueHub.Remove(id)
+	clientLinkHub.RemoveAll(id)
+}
+
 // 传输数据
 func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, firstSendData []byte, addr string) error {
 	var masterProxy *ProxyClient
+	var masterWsc *WebSocketClient
 	var masterID ksuid.KSUID
 	var sorted []ksuid.KSUID
 	for i, w := range wsc {
@@ -158,16 +171,16 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 				//fmt.Println("client receive eof")
 				link.WriteEOF()
 			}
-		}, func(id ksuid.KSUID, tell bool) { //onclosed
-			//服务器出错让关闭，关闭双向的通道
-			clientQueueHub.Remove(id)
-			clientLinkHub.RemoveAll(id)
+		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
+			//服务器出错让关闭，关闭双向的通道, 结束wait等待
+			client.remove(id)
 		}, func(id ksuid.KSUID, err error) { //onerror
 		})
 		defer w.RemoveProxy(p.Id)
 
 		// 第一个做为主id
 		if i == 0 {
+			masterWsc = w
 			masterID = p.Id
 			masterProxy = p
 		}
@@ -186,10 +199,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		clientLinkHub.Add(p.Id, masterID)
 	}
 
-	defer func() {
-		clientQueueHub.Remove(masterID)
-		clientLinkHub.RemoveAll(masterID)
-	}()
+	defer client.remove(masterID)
 
 	// 告知服务端目标地址和协议，还有首次发送的数据包, 额外告知有几路以及顺序如何
 	// 第二到N条线路不需要Establish因为不用和目标机器连接
@@ -209,7 +219,11 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	go func() {
 		_, err := pipe.CopyBuffer(qq, conn) //io.Copy(qq, conn)
 		if err != nil {
-			log.Error("write error: ", err)
+			if !strings.Contains(err.Error(), "use of closed network connection") {
+				log.Error("write error: ", err)
+			}
+			// 发送Close给server，只给主连接发送就行
+			masterWsc.TellClose(masterID)
 		}
 	}()
 

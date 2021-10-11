@@ -70,21 +70,11 @@ func (q *link) Send(hub *LinkHub) error {
 				if err != nil {
 					return err
 				}
-				if q.conn != nil {
-					if b.eof {
-						//fmt.Println("link send eof")
-						// 发送关闭写请求
-						q.conn.CloseWrite()
-						return nil
-					}
-					pipePrintln("link.send from:", id, "data:", string(b.data))
-					_, e := q.conn.Write(b.data)
-					if e != nil {
-						pipePrintln("link.send write", e.Error())
-						return e
-					}
-				} else {
-					return errors.New("conn not found")
+				pipePrintln("link.send from:", id, "data:", string(b.data))
+				_, err = safeWrite(q.conn, b.data, b.eof)
+				if err != nil {
+					pipePrintln("link.send write", err.Error())
+					return err
 				}
 			} else {
 				pipePrintln(id, "link.send queue not found")
