@@ -170,6 +170,18 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if checkAddrPrivite(addr) {
 		return errors.New("visit privite network, dial deny")
 	}
+	logTag := addr + ":" + id.String()
+	// 调试函数，方便针对域名输出日志
+	debugPrint := func(args ...interface{}) {
+		if !pipe.DebugLog {
+			return
+		}
+		if strings.Contains(addr, pipe.DebugLogDomain) {
+			log.Debug(args...)
+		}
+	}
+	debugPrint(timeNow(), fmt.Sprintf(" %s start\n", logTag))
+
 	conn, err := net.DialTimeout("tcp", addr, time.Second*8) // todo config timeout
 	if err != nil {
 		return err
@@ -190,7 +202,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if writer != nil {
 		go func() {
 			// 从外面往回接收数据
-			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn), addr)
+			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn), logTag)
 			if err != nil {
 				if strings.Contains(err.Error(), "connection reset by peer") {
 				} else if strings.Contains(err.Error(), "use of closed network connection") {
@@ -199,13 +211,14 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 				}
 				// 这里不用告知客户端关闭，统一由establishProxy函数处理
 			}
+			debugPrint(timeNow(), fmt.Sprintf(" %s copy response done err=", logTag), err)
 		}()
 	}
 	//fmt.Println(serverLinkHub.Len(), serverQueueHub.Len())
 	//time.Sleep(time.Minute)
 	//fmt.Println("wait")
 	writer.Wait()
-	//fmt.Println("done")
+	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
 	// s.RemoveProxy(proxy.Id)
 	// tellClosed is called outside this func.
 	return nil

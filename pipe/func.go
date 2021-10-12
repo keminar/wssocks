@@ -22,6 +22,9 @@ var expFiveMinute time.Duration = time.Duration(5) * time.Minute
 // DebugLog 是否记录请求关键点位和慢读写日志
 var DebugLog bool = true
 
+// 慢读写的时间
+var slowTime time.Duration = time.Duration(0) * time.Second
+
 // DebugLogDomain 记录此域名的详细请求日志，在DebugLog为true时生效
 var DebugLogDomain = "oca.nflxvideo.net"
 
@@ -57,8 +60,8 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn, addr string) (written int64, e
 			return
 		}
 		diff := time.Since(s1)
-		if diff > time.Duration(1)*time.Second {
-			debugPrint(time.Now(), fmt.Sprintf(" %s %s %d cost ", addr, action, nr), diff)
+		if diff > slowTime {
+			debugPrint(time.Now().Format(time.RFC3339Nano), fmt.Sprintf(" %s %s %d cost ", addr, action, nr), diff)
 		}
 	}
 	//如果设置过大会耗内存高，4k比较合理

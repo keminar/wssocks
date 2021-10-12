@@ -118,6 +118,7 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			firstSendData, proxyType, addr, err := client.Reply(conn)
 			if err != nil {
 				log.Error("reply error: ", err)
+				return
 			}
 			// 在client.Close中使用wait等待
 			client.wgClose.Add(1)
@@ -186,7 +187,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 				link.WriteEOF()
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
-			debugPrint(time.Now(), fmt.Sprintf(" %s receive close from server\n", logTag))
+			debugPrint(timeNow(), fmt.Sprintf(" %s receive close from server\n", logTag))
 			//服务器出错让关闭，关闭双向的通道, 结束wait等待
 			remove(id)
 		}, func(id ksuid.KSUID, err error) { //onerror
@@ -216,6 +217,10 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	// 删除map中数据
 	defer remove(masterID)
 
+	// 补充ID，方便分析日志
+	logTag = logTag + ":" + masterID.String()
+	debugPrint(timeNow(), fmt.Sprintf(" %s start\n", logTag))
+
 	// 告知服务端目标地址和协议，还有首次发送的数据包, 额外告知有几路以及顺序如何
 	// 第二到N条线路不需要Establish因为不用和目标机器连接
 	if err := masterProxy.Establish(wsc[0], firstSendData, addr, sorted); err != nil {
@@ -230,11 +235,9 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	// 设置发送顺序
 	qq.SetSort(sorted)
 
-	// 补充ID，方便分析日志
-	logTag = logTag + ":" + masterID.String()
 	go func() {
 		qq.Send()
-		debugPrint(time.Now(), fmt.Sprintf(" %s send request done\n", logTag))
+		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
 	}()
 
 	go func() {
@@ -246,7 +249,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			// 发送Close给server，只给主连接发送就行
 			masterWsc.TellClose(masterID)
 		}
-		debugPrint(time.Now(), fmt.Sprintf(" %s copy request done err=", logTag), err)
+		debugPrint(timeNow(), fmt.Sprintf(" %s copy request done err=", logTag), err)
 	}()
 
 	//接收数据
@@ -259,14 +262,14 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	oo.SetSort(sorted)
 	go func() {
 		oo.Send(clientLinkHub)
-		debugPrint(time.Now(), fmt.Sprintf(" %s get response done\n", logTag))
+		debugPrint(timeNow(), fmt.Sprintf(" %s get response done\n", logTag))
 	}()
 
 	//fmt.Println(clientLinkHub.Len(), clientQueueHub.Len())
 	//time.Sleep(time.Minute)
 	//fmt.Println("wait")
 	oo.Wait()
-	debugPrint(time.Now(), fmt.Sprintf(" %s all done\n", logTag))
+	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
 	return nil
 }
 
@@ -283,4 +286,8 @@ func (client *Client) Close(wait bool) error {
 		client.wgClose.Wait() // wait the active connection to finish
 	}
 	return err
+}
+
+func timeNow() string {
+	return time.Now().Format(time.RFC3339Nano)
 }
