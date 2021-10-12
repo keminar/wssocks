@@ -194,7 +194,9 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	}()
 	go func() {
 		link := serverLinkHub.Get(id)
-		link.Wait()
+		if link != nil {
+			link.Wait()
+		}
 		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
 	}()
 
