@@ -192,6 +192,11 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 		conn.Close()
 		e.Close(id)
 	}()
+	go func() {
+		link := serverLinkHub.Get(id)
+		link.Wait()
+		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
+	}()
 
 	// todo check exists
 	hub.addNewProxy(&ProxyServer{Id: id, ProxyIns: e})
