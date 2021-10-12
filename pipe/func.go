@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -18,7 +19,11 @@ var expHour time.Duration = time.Duration(1) * time.Hour
 var expMinute time.Duration = time.Duration(1) * time.Minute
 var expFiveMinute time.Duration = time.Duration(5) * time.Minute
 
-var copySlowLog bool = true
+// DebugLog 是否记录请求关键点位和慢读写日志
+var DebugLog bool = true
+
+// DebugLogDomain 记录此域名的详细请求日志，在DebugLog为true时生效
+var DebugLogDomain = "oca.nflxvideo.net"
 
 // 状态值
 const (
@@ -40,6 +45,22 @@ type buffer struct {
 
 // CopyBuffer 传输数据
 func CopyBuffer(pw PipeWriter, conn *net.TCPConn, addr string) (written int64, err error) {
+	// 调试函数，方便针对域名输出日志
+	debugPrint := func(args ...interface{}) {
+		if strings.Contains(addr, DebugLogDomain) {
+			log.Debug(args...)
+		}
+	}
+	// 比较有没有达到记录日志条件
+	debugCompare := func(action string, s1 time.Time, nr int) {
+		if !DebugLog {
+			return
+		}
+		diff := time.Since(s1)
+		if diff > time.Duration(1)*time.Second {
+			debugPrint(time.Now(), fmt.Sprintf(" %s %s %d cost ", addr, action, nr), diff)
+		}
+	}
 	//如果设置过大会耗内存高，4k比较合理
 	size := 4 * 1024
 	if pipeDebug {
@@ -51,20 +72,14 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn, addr string) (written int64, e
 		i++
 		s1 := time.Now()
 		nr, er := conn.Read(buf)
-		diff := time.Since(s1)
-		if copySlowLog && diff > time.Duration(1)*time.Second {
-			log.Debug(time.Now(), fmt.Sprintf(" %s read %d cost ", addr, nr), diff)
-		}
+		debugCompare("read", s1, nr)
 		if nr > 0 {
 			//fmt.Println("copy read", nr)
 			var nw int
 			var ew error
 			s1 := time.Now()
 			nw, ew = pw.Write(buf[0:nr])
-			diff := time.Since(s1)
-			if copySlowLog && diff > time.Duration(1)*time.Second {
-				log.Debug(time.Now(), fmt.Sprintf(" %s write %d cost ", addr, nr), diff)
-			}
+			debugCompare("write", s1, nr)
 			if nw > 0 {
 				written += int64(nw)
 			}

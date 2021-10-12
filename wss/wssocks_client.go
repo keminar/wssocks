@@ -160,6 +160,18 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		clientQueueHub.Remove(id)
 		clientLinkHub.RemoveAll(id)
 	}
+
+	// 前置定义，为了在onclosed回调时也能用
+	logTag := addr
+	// 调试函数，方便针对域名输出日志
+	debugPrint := func(args ...interface{}) {
+		if !pipe.DebugLog {
+			return
+		}
+		if strings.Contains(addr, pipe.DebugLogDomain) {
+			log.Debug(args...)
+		}
+	}
 	for i, w := range wsc {
 		// create a with proxy with callback func
 		p := w.NewProxy(func(id ksuid.KSUID, data ServerData) { //ondata 接收数据回调
@@ -174,6 +186,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 				link.WriteEOF()
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
+			debugPrint(time.Now(), fmt.Sprintf(" %s receive close from server\n", logTag))
 			//服务器出错让关闭，关闭双向的通道, 结束wait等待
 			remove(id)
 		}, func(id ksuid.KSUID, err error) { //onerror
@@ -217,10 +230,11 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	// 设置发送顺序
 	qq.SetSort(sorted)
 
-	logTag := addr + ":" + masterID.String()
+	// 补充ID，方便分析日志
+	logTag = logTag + ":" + masterID.String()
 	go func() {
 		qq.Send()
-		log.Debug(time.Now(), fmt.Sprintf(" %s send request done\n", logTag))
+		debugPrint(time.Now(), fmt.Sprintf(" %s send request done\n", logTag))
 	}()
 
 	go func() {
@@ -232,7 +246,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			// 发送Close给server，只给主连接发送就行
 			masterWsc.TellClose(masterID)
 		}
-		log.Debug(time.Now(), fmt.Sprintf(" %s copy request done err=", logTag), err)
+		debugPrint(time.Now(), fmt.Sprintf(" %s copy request done err=", logTag), err)
 	}()
 
 	//接收数据
@@ -245,14 +259,14 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	oo.SetSort(sorted)
 	go func() {
 		oo.Send(clientLinkHub)
-		log.Debug(time.Now(), fmt.Sprintf(" %s get response done\n", logTag))
+		debugPrint(time.Now(), fmt.Sprintf(" %s get response done\n", logTag))
 	}()
 
 	//fmt.Println(clientLinkHub.Len(), clientQueueHub.Len())
 	//time.Sleep(time.Minute)
 	//fmt.Println("wait")
 	oo.Wait()
-	log.Debug(time.Now(), fmt.Sprintf(" %s all done\n", logTag))
+	debugPrint(time.Now(), fmt.Sprintf(" %s all done\n", logTag))
 	return nil
 }
 
