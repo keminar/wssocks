@@ -64,8 +64,9 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn, d *dead, addr string) (written
 			debugPrint(time.Now().Format(time.RFC3339Nano), fmt.Sprintf(" %s %s %d cost ", addr, action, nr), diff)
 		}
 	}
-	//如果设置过大会耗内存高，4k比较合理
-	size := 4 * 1024
+	//如果设置过大会耗内存高
+	//通过设置1k，2k，4k，8k做对比，2k速度最快
+	size := 2 * 1024
 	if pipeDebug {
 		size = 10 //临时测试
 	}
