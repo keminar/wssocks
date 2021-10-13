@@ -68,7 +68,7 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 	}
 	// debug
 	//if socketStream.Type != WsTpBeats {
-	//	fmt.Println("dispatch", id, socketStream.Type)
+	//	log.Debug("dispatch ", id, " ", socketStream.Type)
 	//}
 
 	switch socketStream.Type {
@@ -100,7 +100,7 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 				estData = decodedBytes
 			}
 		}
-		//fmt.Println("est", id, proxyEstMsg.Sorted)
+		//log.Debug("est ", id, " ", proxyEstMsg.Sorted)
 		serverQueueHub.SetSort(id, proxyEstMsg.Sorted)
 		serverLinkHub.SetSort(id, proxyEstMsg.Sorted)
 		// 与外面建立连接，并把外面返回的数据放回websocket
@@ -111,6 +111,7 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 			fmt.Println("json", err)
 			return err
 		}
+
 		link := serverLinkHub.Get(id)
 		if link == nil {
 			// 远程请求的服务器主动断开，establish函数结束，连接已经被主连接释放
@@ -118,8 +119,10 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 			//fmt.Println(time.Now(), id, requestMsg.Tag, "link not found")
 			return nil
 		}
+		// 注意虽然WsTpData一定在WsTpEst之后收到 ，但这边代码的执行不一定会在establish中代码准备完成之后
+		//    因为establish中代码执行也需要时间，同时data就会发送过来，需要当成并发来看待
 		if requestMsg.Tag == TagEOF { //设置收到io.EOF结束符
-			//fmt.Println("server receive eof")
+			//log.Debug("server receive eof ", id)
 			link.WriteEOF()
 			return nil
 		}
@@ -186,6 +189,9 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if err != nil {
 		return err
 	}
+
+	// 定义一个超时, 默认是一个较长超时
+	d := pipe.NewDead()
 	//收集请求发送出去
 	serverLinkHub.TrySend(id, conn.(*net.TCPConn))
 	defer func() {
@@ -198,6 +204,10 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 			link.Wait()
 		}
 		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
+		// 写已经结束，修改读超时为短超时, 因为发现有时发送了closeWrite还是会一直卡住read
+		d.Line = time.Duration(5) * time.Second
+		// 马上执行一次，让当前卡住的读也用短超时
+		conn.SetReadDeadline(time.Now().Add(d.Line))
 	}()
 
 	// todo check exists
@@ -209,7 +219,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if writer != nil {
 		go func() {
 			// 从外面往回接收数据
-			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn), logTag)
+			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn), d, logTag)
 			if err != nil {
 				if strings.Contains(err.Error(), "connection reset by peer") {
 				} else if strings.Contains(err.Error(), "use of closed network connection") {

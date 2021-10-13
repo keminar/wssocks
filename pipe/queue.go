@@ -81,6 +81,7 @@ func (q *queue) Send() error {
 		q.done <- struct{}{}
 		close(q.done)
 	}()
+	//log.Warn(time.Now(), " queue start")
 	// 设置为开始发送
 	q.status = StaSend
 	for {
@@ -92,11 +93,13 @@ func (q *queue) Send() error {
 			w := q.writers[id]
 			b, err := readWithTimeout(q.buffer, expFiveMinute)
 			if err != nil {
+				//log.Warn(time.Now(), " queue read timeout ", id)
 				return err
 			}
 			if b.eof {
 				//fmt.Println("queue send eof")
 				w.WriteEOF()
+				//log.Warn(time.Now(), " write eof ", id)
 				return nil
 			}
 			pipePrintln("queue.send to:", id, "data:", string(b.data))

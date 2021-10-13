@@ -23,7 +23,7 @@ var expFiveMinute time.Duration = time.Duration(5) * time.Minute
 var DebugLog bool = true
 
 // 慢读写的时间
-var slowTime time.Duration = time.Duration(0) * time.Second
+var slowTime time.Duration = time.Duration(1) * time.Second
 
 // DebugLogDomain 记录此域名的详细请求日志，在DebugLog为true时生效
 var DebugLogDomain = "oca.nflxvideo.net"
@@ -47,7 +47,7 @@ type buffer struct {
 }
 
 // CopyBuffer 传输数据
-func CopyBuffer(pw PipeWriter, conn *net.TCPConn, addr string) (written int64, err error) {
+func CopyBuffer(pw PipeWriter, conn *net.TCPConn, d *dead, addr string) (written int64, err error) {
 	// 调试函数，方便针对域名输出日志
 	debugPrint := func(args ...interface{}) {
 		if strings.Contains(addr, DebugLogDomain) {
@@ -74,6 +74,7 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn, addr string) (written int64, e
 	for {
 		i++
 		s1 := time.Now()
+		conn.SetReadDeadline(time.Now().Add(d.Line))
 		nr, er := conn.Read(buf)
 		debugCompare("read", s1, nr)
 		if nr > 0 {
@@ -101,6 +102,9 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn, addr string) (written int64, e
 			pw.WriteEOF()
 			break
 		} else if er != nil {
+			//多写一个EOF让外层从chan的读取也退出
+			//比如当proxy_server向外面发送了closeWrite后，这边read已经超时退出，但是pipe.Send函数还卡着
+			pw.WriteEOF()
 			err = fmt.Errorf("#3 %s", er.Error())
 			break
 		}
@@ -119,6 +123,7 @@ func safeWrite(conn *net.TCPConn, data []byte, closeWrite bool) (n int, err erro
 		return 0, errors.New("conn is closed")
 	}
 	if closeWrite {
+		//log.Debug("send closeWrite")
 		err = conn.CloseWrite()
 		return 0, err
 	}

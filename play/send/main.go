@@ -25,7 +25,9 @@ func main() {
 		log.Println("dail err", err.Error())
 		return
 	}
-	go test2(conn.(*net.TCPConn))
+	//go test2(conn.(*net.TCPConn))
+	//测试1, 不conn.Close等服务端超时，测试2,直接conn.Close，然后Sleep看日志情况
+	conn.Close()
 	log.Println("wait...")
 	time.Sleep(time.Minute * 10)
 }

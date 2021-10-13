@@ -241,7 +241,8 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	}()
 
 	go func() {
-		_, err := pipe.CopyBuffer(qq, conn, logTag) //io.Copy(qq, conn)
+		d := pipe.NewDead()
+		_, err := pipe.CopyBuffer(qq, conn, d, logTag) //io.Copy(qq, conn)
 		if err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
 				log.Error("copy error: ", err)
