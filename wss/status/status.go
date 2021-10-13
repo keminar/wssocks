@@ -2,9 +2,10 @@ package status
 
 import (
 	"encoding/json"
-	"github.com/genshen/wssocks/wss"
 	"net/http"
 	"time"
+
+	"github.com/genshen/wssocks/wss"
 )
 
 type Version struct {
@@ -27,9 +28,11 @@ type Info struct {
 }
 
 type Statistics struct {
-	UpTime  float64 `json:"up_time"`
-	Clients int     `json:"clients"`
-	Proxies int     `json:"proxies"`
+	UpTime   float64 `json:"up_time"`
+	Clients  int     `json:"clients"`
+	Proxies  int     `json:"proxies"`
+	QueueLen int     `json:"queue_len"`
+	LinkLen  int     `json:"link_len"`
 }
 
 type Status struct {
@@ -63,6 +66,7 @@ func (s *handleStatus) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	clients, proxies := s.hc.GetConnCount()
 	duration := time.Now().Sub(s.setupTime).Truncate(time.Second)
+	ql, ll := wss.StaticServer()
 
 	status := Status{
 		Info: Info{
@@ -80,9 +84,11 @@ func (s *handleStatus) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			SSLDisableReason:    "not support", // todo ssl support
 		},
 		Statistics: Statistics{
-			UpTime:  duration.Seconds(),
-			Clients: clients,
-			Proxies: proxies,
+			UpTime:   duration.Seconds(),
+			Clients:  clients,
+			Proxies:  proxies,
+			QueueLen: ql,
+			LinkLen:  ll,
 		},
 	}
 

@@ -55,6 +55,7 @@ func (q *link) Send(hub *LinkHub) error {
 		q.done <- struct{}{}
 		close(q.done)
 	}()
+	//log.Warn(time.Now(), " link start")
 	// 设置为开始发送
 	q.status = StaSend
 
@@ -66,8 +67,10 @@ func (q *link) Send(hub *LinkHub) error {
 		for _, id := range q.sorted {
 			s := hub.Get(id)
 			if s != nil {
+				//log.Warn(time.Now(), " link read from ", id)
 				b, err := readWithTimeout(s.buffer, expFiveMinute)
 				if err != nil {
+					//log.Warn(time.Now(), " link read timeout ", id)
 					return err
 				}
 				pipePrintln("link.send from:", id, "data:", string(b.data))
@@ -75,6 +78,10 @@ func (q *link) Send(hub *LinkHub) error {
 				if err != nil {
 					pipePrintln("link.send write", err.Error())
 					return err
+				}
+				// 已经发送了关闭写，就不要再卡在循环里了
+				if b.eof {
+					return nil
 				}
 			} else {
 				pipePrintln(id, "link.send queue not found")

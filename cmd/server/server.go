@@ -98,6 +98,7 @@ func (s *server) Run() error {
 			log.Fatal(err)
 		}
 		http.Handle("/status/", http.StripPrefix("/status", http.FileServer(statikFS)))
+		// 通过http://localhost:1088/api/status/ 查看
 		http.Handle("/api/status/", status.NewStatusHandle(hc, s.http, s.authEnable, s.wsBasePath))
 	}
 

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // 是否打开调试日志
@@ -15,6 +18,15 @@ var pipeDebug bool = false
 var expHour time.Duration = time.Duration(1) * time.Hour
 var expMinute time.Duration = time.Duration(1) * time.Minute
 var expFiveMinute time.Duration = time.Duration(5) * time.Minute
+
+// DebugLog 是否记录请求关键点位和慢读写日志
+var DebugLog bool = true
+
+// 慢读写的时间
+var slowTime time.Duration = time.Duration(1) * time.Second
+
+// DebugLogDomain 记录此域名的详细请求日志，在DebugLog为true时生效
+var DebugLogDomain = "oca.nflxvideo.net"
 
 // 状态值
 const (
@@ -35,7 +47,23 @@ type buffer struct {
 }
 
 // CopyBuffer 传输数据
-func CopyBuffer(pw PipeWriter, conn *net.TCPConn) (written int64, err error) {
+func CopyBuffer(pw PipeWriter, conn *net.TCPConn, d *dead, addr string) (written int64, err error) {
+	// 调试函数，方便针对域名输出日志
+	debugPrint := func(args ...interface{}) {
+		if strings.Contains(addr, DebugLogDomain) {
+			log.Debug(args...)
+		}
+	}
+	// 比较有没有达到记录日志条件
+	debugCompare := func(action string, s1 time.Time, nr int) {
+		if !DebugLog {
+			return
+		}
+		diff := time.Since(s1)
+		if diff > slowTime {
+			debugPrint(time.Now().Format(time.RFC3339Nano), fmt.Sprintf(" %s %s %d cost ", addr, action, nr), diff)
+		}
+	}
 	//如果设置过大会耗内存高，4k比较合理
 	size := 4 * 1024
 	if pipeDebug {
@@ -45,12 +73,17 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn) (written int64, err error) {
 	i := 0
 	for {
 		i++
+		s1 := time.Now()
+		conn.SetReadDeadline(time.Now().Add(d.Line))
 		nr, er := conn.Read(buf)
+		debugCompare("read", s1, nr)
 		if nr > 0 {
 			//fmt.Println("copy read", nr)
 			var nw int
 			var ew error
+			s1 := time.Now()
 			nw, ew = pw.Write(buf[0:nr])
+			debugCompare("write", s1, nr)
 			if nw > 0 {
 				written += int64(nw)
 			}
@@ -69,6 +102,9 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn) (written int64, err error) {
 			pw.WriteEOF()
 			break
 		} else if er != nil {
+			//多写一个EOF让外层从chan的读取也退出
+			//比如当proxy_server向外面发送了closeWrite后，这边read已经超时退出，但是pipe.Send函数还卡着
+			pw.WriteEOF()
 			err = fmt.Errorf("#3 %s", er.Error())
 			break
 		}
@@ -87,6 +123,7 @@ func safeWrite(conn *net.TCPConn, data []byte, closeWrite bool) (n int, err erro
 		return 0, errors.New("conn is closed")
 	}
 	if closeWrite {
+		//log.Debug("send closeWrite")
 		err = conn.CloseWrite()
 		return 0, err
 	}

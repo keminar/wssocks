@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/genshen/wssocks/pipe"
 	"github.com/segmentio/ksuid"
@@ -117,6 +118,7 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			firstSendData, proxyType, addr, err := client.Reply(conn)
 			if err != nil {
 				log.Error("reply error: ", err)
+				return
 			}
 			// 在client.Close中使用wait等待
 			client.wgClose.Add(1)
@@ -133,6 +135,13 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			record.Update(ConnStatus{IsNew: true, Address: addr, Type: proxyType})
 			defer record.Update(ConnStatus{IsNew: false, Address: addr, Type: proxyType})
 
+			// 检查addr或addr的解析地址是不是私有地址等
+			if checkAddrPrivite(addr) {
+				if err := client.localVisit(conn, firstSendData, addr); err != nil {
+					log.Error("visit error: ", err)
+				}
+				return
+			}
 			// 传输数据
 			// on connection established, copy data now.
 			if err := client.transData(wsc, conn, firstSendData, addr); err != nil {
@@ -142,14 +151,31 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 	}
 }
 
-// 释放资源
-func (client *Client) remove(id ksuid.KSUID) {
-	if client.status == "removed" {
-		return
+// 本地域名请求
+func (client *Client) localVisit(conn *net.TCPConn, firstSendData []byte, addr string) error {
+	remote, err := net.DialTimeout("tcp", addr, time.Second*8) // todo config timeout
+	if err != nil {
+		return err
 	}
-	client.status = "removed"
-	clientQueueHub.Remove(id)
-	clientLinkHub.RemoveAll(id)
+	defer remote.Close()
+
+	d := pipe.NewDead()
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if len(firstSendData) > 0 { //debug
+			panic(string(firstSendData))
+		}
+		remote.Write(firstSendData)
+		pipe.CopyBuffer(pipe.NewTcp(remote.(*net.TCPConn)), conn, d, addr)
+	}()
+	go func() {
+		defer wg.Done()
+		pipe.CopyBuffer(pipe.NewTcp(conn), remote.(*net.TCPConn), d, addr)
+	}()
+	wg.Wait()
+	return nil
 }
 
 // 传输数据
@@ -158,6 +184,32 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	var masterWsc *WebSocketClient
 	var masterID ksuid.KSUID
 	var sorted []ksuid.KSUID
+	// 注: 因为socks5首包是交互协议firstSendData永远是空
+	if len(firstSendData) > 0 { //debug
+		panic(string(firstSendData))
+	}
+	var status = ""
+	// 单次释放资源，因为client类对多次请求是共享的，所以不能用它的方法实现。这里定义个局部函数
+	remove := func(id ksuid.KSUID) {
+		if status == "removed" {
+			return
+		}
+		status = "removed"
+		clientQueueHub.Remove(id)
+		clientLinkHub.RemoveAll(id)
+	}
+
+	// 前置定义，为了在onclosed回调时也能用
+	logTag := addr
+	// 调试函数，方便针对域名输出日志
+	debugPrint := func(args ...interface{}) {
+		if !pipe.DebugLog {
+			return
+		}
+		if strings.Contains(addr, pipe.DebugLogDomain) {
+			log.Debug(args...)
+		}
+	}
 	for i, w := range wsc {
 		// create a with proxy with callback func
 		p := w.NewProxy(func(id ksuid.KSUID, data ServerData) { //ondata 接收数据回调
@@ -172,8 +224,9 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 				link.WriteEOF()
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
+			debugPrint(timeNow(), fmt.Sprintf(" %s receive close from server\n", logTag))
 			//服务器出错让关闭，关闭双向的通道, 结束wait等待
-			client.remove(id)
+			remove(id)
 		}, func(id ksuid.KSUID, err error) { //onerror
 		})
 		defer w.RemoveProxy(p.Id)
@@ -198,8 +251,12 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		clientQueueHub.Add(masterID, p.Id, writer)
 		clientLinkHub.Add(p.Id, masterID)
 	}
+	// 删除map中数据
+	defer remove(masterID)
 
-	defer client.remove(masterID)
+	// 补充ID，方便分析日志
+	logTag = logTag + ":" + masterID.String()
+	debugPrint(timeNow(), fmt.Sprintf(" %s start\n", logTag))
 
 	// 告知服务端目标地址和协议，还有首次发送的数据包, 额外告知有几路以及顺序如何
 	// 第二到N条线路不需要Establish因为不用和目标机器连接
@@ -214,17 +271,23 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	}
 	// 设置发送顺序
 	qq.SetSort(sorted)
-	go qq.Send()
 
 	go func() {
-		_, err := pipe.CopyBuffer(qq, conn) //io.Copy(qq, conn)
+		qq.Send()
+		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
+	}()
+
+	go func() {
+		d := pipe.NewDead()
+		_, err := pipe.CopyBuffer(qq, conn, d, logTag) //io.Copy(qq, conn)
 		if err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
-				log.Error("write error: ", err)
+				log.Error("copy error: ", err)
 			}
 			// 发送Close给server，只给主连接发送就行
 			masterWsc.TellClose(masterID)
 		}
+		debugPrint(timeNow(), fmt.Sprintf(" %s copy request done err=", logTag), err)
 	}()
 
 	//接收数据
@@ -235,13 +298,16 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	// 设置接收的数据发送到哪
 	oo.SetConn(conn)
 	oo.SetSort(sorted)
-	go oo.Send(clientLinkHub)
+	go func() {
+		oo.Send(clientLinkHub)
+		debugPrint(timeNow(), fmt.Sprintf(" %s get response done\n", logTag))
+	}()
 
 	//fmt.Println(clientLinkHub.Len(), clientQueueHub.Len())
 	//time.Sleep(time.Minute)
 	//fmt.Println("wait")
 	oo.Wait()
-	//fmt.Println("done")
+	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
 	return nil
 }
 
@@ -258,4 +324,8 @@ func (client *Client) Close(wait bool) error {
 		client.wgClose.Wait() // wait the active connection to finish
 	}
 	return err
+}
+
+func timeNow() string {
+	return time.Now().Format(time.RFC3339Nano)
 }
