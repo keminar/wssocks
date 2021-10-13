@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -135,6 +136,13 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			record.Update(ConnStatus{IsNew: true, Address: addr, Type: proxyType})
 			defer record.Update(ConnStatus{IsNew: false, Address: addr, Type: proxyType})
 
+			// 安全检查addr或addr的解析地址不能为私有地址等
+			if checkAddrPrivite(addr) {
+				if err := client.localVisit(conn, firstSendData, addr); err != nil {
+					log.Error("visit error: ", err)
+				}
+				return
+			}
 			// 传输数据
 			// on connection established, copy data now.
 			if err := client.transData(wsc, conn, firstSendData, addr); err != nil {
@@ -144,13 +152,35 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 	}
 }
 
+// 本地域名请求
+func (client *Client) localVisit(conn *net.TCPConn, firstSendData []byte, addr string) error {
+	remote, err := net.DialTimeout("tcp", addr, time.Second*8) // todo config timeout
+	if err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	go func() {
+		if len(firstSendData) > 0 { //debug
+			panic(string(firstSendData))
+		}
+		remote.Write(firstSendData)
+		io.Copy(remote, conn)
+		done <- struct{}{}
+	}()
+	io.Copy(conn, remote)
+	<-done
+	return nil
+}
+
 // 传输数据
 func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, firstSendData []byte, addr string) error {
 	var masterProxy *ProxyClient
 	var masterWsc *WebSocketClient
 	var masterID ksuid.KSUID
 	var sorted []ksuid.KSUID
-
+	if len(firstSendData) > 0 { //debug 检查变量为什么没用到
+		panic(string(firstSendData))
+	}
 	var status = ""
 	// 单次释放资源，因为client类对多次请求是共享的，所以不能用它的方法实现。这里定义个局部函数
 	remove := func(id ksuid.KSUID) {
