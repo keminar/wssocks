@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync"
@@ -136,7 +135,7 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			record.Update(ConnStatus{IsNew: true, Address: addr, Type: proxyType})
 			defer record.Update(ConnStatus{IsNew: false, Address: addr, Type: proxyType})
 
-			// 安全检查addr或addr的解析地址不能为私有地址等
+			// 检查addr或addr的解析地址是不是私有地址等
 			if checkAddrPrivite(addr) {
 				if err := client.localVisit(conn, firstSendData, addr); err != nil {
 					log.Error("visit error: ", err)
@@ -158,17 +157,24 @@ func (client *Client) localVisit(conn *net.TCPConn, firstSendData []byte, addr s
 	if err != nil {
 		return err
 	}
-	done := make(chan struct{})
+	defer remote.Close()
+
+	d := pipe.NewDead()
+	wg := sync.WaitGroup{}
+	wg.Add(2)
 	go func() {
+		defer wg.Done()
 		if len(firstSendData) > 0 { //debug
 			panic(string(firstSendData))
 		}
 		remote.Write(firstSendData)
-		io.Copy(remote, conn)
-		done <- struct{}{}
+		pipe.CopyBuffer(pipe.NewTcp(remote.(*net.TCPConn)), conn, d, addr)
 	}()
-	io.Copy(conn, remote)
-	<-done
+	go func() {
+		defer wg.Done()
+		pipe.CopyBuffer(pipe.NewTcp(conn), remote.(*net.TCPConn), d, addr)
+	}()
+	wg.Wait()
 	return nil
 }
 
@@ -178,7 +184,8 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	var masterWsc *WebSocketClient
 	var masterID ksuid.KSUID
 	var sorted []ksuid.KSUID
-	if len(firstSendData) > 0 { //debug 检查变量为什么没用到
+	// 注: 因为socks5首包是交互协议firstSendData永远是空
+	if len(firstSendData) > 0 { //debug
 		panic(string(firstSendData))
 	}
 	var status = ""
