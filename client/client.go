@@ -218,7 +218,7 @@ func (hdl *Handles) StartClient(c *Options, once *sync.Once) {
 		}
 	}()
 
-	record := wss.NewConnRecord()
+	record := wss.NewConnRecord(hdl.wsc)
 	if terminal.IsTerminal(int(os.Stdout.Fd())) {
 		// if it is tty, use term_view as output, and set onChange function to update output
 		plog := term_view.NewPLog(record)

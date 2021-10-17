@@ -39,7 +39,9 @@ func NewWebSocketClient(ctx context.Context, addr string, hc *http.Client, heade
 	}
 	return &WebSocketClient{
 		ConcurrentWebSocket: ConcurrentWebSocket{
-			WsConn: ws,
+			WsConn:   ws,
+			Download: NewCounter(),
+			Upload:   NewCounter(),
 		},
 		cancel:  nil,
 		proxies: make(map[ksuid.KSUID]*ProxyClient),
@@ -142,6 +144,10 @@ func (wsc *WebSocketClient) ListenIncomeMsg(readLimit int64) error {
 						proxy.onError(ksid, err)
 						continue
 					} else {
+						// 流量统计
+						if proxyData.Tag == TagData {
+							wsc.ConcurrentWebSocket.Download.Add(int64(len(decodeBytes)))
+						}
 						// just write data back
 						proxy.onData(ksid, ServerData{Tag: proxyData.Tag, Data: decodeBytes})
 					}

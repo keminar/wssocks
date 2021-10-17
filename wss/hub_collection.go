@@ -1,9 +1,10 @@
 package wss
 
 import (
+	"sync"
+
 	"github.com/segmentio/ksuid"
 	"nhooyr.io/websocket"
-	"sync"
 )
 
 // HubCollection is a set of hubs. It handle several hubs.
@@ -27,9 +28,13 @@ func (hc *HubCollection) NewHub(conn *websocket.Conn) *Hub {
 	defer hc.mutex.Unlock()
 
 	hub := Hub{
-		id:                  ksuid.New(),
-		ConcurrentWebSocket: ConcurrentWebSocket{WsConn: conn},
-		connPool:            make(map[ksuid.KSUID]*ProxyServer),
+		id: ksuid.New(),
+		ConcurrentWebSocket: ConcurrentWebSocket{
+			WsConn:   conn,
+			Download: NewCounter(),
+			Upload:   NewCounter(),
+		},
+		connPool: make(map[ksuid.KSUID]*ProxyServer),
 	}
 
 	hc.hubs[hub.id] = &hub

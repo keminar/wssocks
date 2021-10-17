@@ -39,11 +39,23 @@ func (p *ProgressLog) SetLogBuffer(r *wss.ConnRecord) {
 	w.Init(p.Writer, 0, 0, 5, ' ', 0)
 	defer w.Flush()
 
-	_, _ = fmt.Fprintf(w, "TARGETs\tCONNECTIONs\t\n")
-	terminalRows--
+	if terminalRows > len(r.Wsc)+1 {
+		for i, ws := range r.Wsc {
+			un, us := ws.Upload.Get()
+			dn, ds := ws.Download.Get()
+			fmt.Fprintf(w, "Conn(%d): Up:(%d/%s)\tDown:(%d/%s)\t\n", i, un, us.String(), dn, ds.String())
+			terminalRows--
+		}
 
-	var recordsHiden = len(r.Addresses)
+		// 显示当前传输全局变量释放情况
+		_, _ = fmt.Fprintf(w, "Pipe Status: \tQueueLen: %d LinkLen: %d\t\n", r.QueueHubLen, r.LinkHubLen)
+		terminalRows--
+	}
+
 	if terminalRows >= 2 { // at least 2 lines left: one for show more records and one for new line(\n).
+		var recordsHiden = len(r.Addresses)
+		_, _ = fmt.Fprintf(w, "TARGETs\tCONNECTIONs\t\n")
+		terminalRows--
 		// have rows left
 		for addr, size := range r.Addresses {
 			if terminalRows <= 2 {
@@ -58,11 +70,6 @@ func (p *ProgressLog) SetLogBuffer(r *wss.ConnRecord) {
 		// log total connection size.
 		if recordsHiden == 0 {
 			_, _ = fmt.Fprintf(w, "TOTAL\t%d\t\n", r.ConnSize)
-
-			// 显示当前传输全局变量释放情况
-			if terminalRows > 2 {
-				_, _ = fmt.Fprintf(w, "QueueLen %d\tLinkLen %d\t\n", r.QueueHubLen, r.LinkHubLen)
-			}
 		} else {
 			_, _ = w.Write([]byte(fmt.Sprintf("TOTAL\t%d\t(%d record(s) hidden)\t\n",
 				r.ConnSize, recordsHiden)))

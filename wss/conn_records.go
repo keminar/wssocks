@@ -16,6 +16,7 @@ type ConnRecord struct {
 	Mutex       *sync.Mutex
 	QueueHubLen int //检查发数据释放情况
 	LinkHubLen  int //检查收数据释放情况
+	Wsc         []*WebSocketClient
 }
 
 // connection status when a connection is added or removed.
@@ -25,13 +26,15 @@ type ConnStatus struct {
 	Type    int
 }
 
-func NewConnRecord() *ConnRecord {
+func NewConnRecord(wsc []*WebSocketClient) *ConnRecord {
 	cr := ConnRecord{ConnSize: 0, OnChange: nil}
 	cr.Addresses = make(map[string]uint)
 	cr.Mutex = &sync.Mutex{}
+	cr.Wsc = wsc
 	return &cr
 }
 
+// 更新统计数据，并在命令行输出
 func (cr *ConnRecord) Update(status ConnStatus) {
 	cr.Mutex.Lock()
 	defer cr.Mutex.Unlock()

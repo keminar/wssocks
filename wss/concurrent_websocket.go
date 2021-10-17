@@ -17,7 +17,9 @@ type ConcurrentWebSocketInterface interface {
 
 // add lock to websocket connection to make sure only one goroutine can write this websocket.
 type ConcurrentWebSocket struct {
-	WsConn *websocket.Conn
+	WsConn   *websocket.Conn
+	Download *counter //下行计数器
+	Upload   *counter //上行计数器
 }
 
 // close websocket connection
@@ -71,9 +73,12 @@ func (writer *webSocketWriter) Write(buffer []byte) (n int, err error) {
 	if writer.Ctx.Err() != nil {
 		return 0, writer.Ctx.Err()
 	}
+
 	if err := writer.WSC.WriteProxyMessage(writer.Ctx, writer.Id, TagData, buffer); err != nil {
 		return 0, err
 	} else {
+		// 上行流量
+		writer.WSC.Upload.Add(int64(len(buffer)))
 		return len(buffer), nil
 	}
 }
