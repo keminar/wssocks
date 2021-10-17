@@ -188,13 +188,9 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	if len(firstSendData) > 0 { //debug
 		panic(string(firstSendData))
 	}
-	var status = ""
+	var once sync.Once
 	// 单次释放资源，因为client类对多次请求是共享的，所以不能用它的方法实现。这里定义个局部函数
 	remove := func(id ksuid.KSUID) {
-		if status == "removed" {
-			return
-		}
-		status = "removed"
 		clientQueueHub.Remove(id)
 		clientLinkHub.RemoveAll(id)
 	}
@@ -226,7 +222,9 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
 			debugPrint(timeNow(), fmt.Sprintf(" %s receive close from server\n", logTag))
 			//服务器出错让关闭，关闭双向的通道, 结束wait等待
-			remove(id)
+			once.Do(func() {
+				remove(id)
+			})
 		}, func(id ksuid.KSUID, err error) { //onerror
 		})
 		defer w.RemoveProxy(p.Id)
@@ -252,7 +250,11 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		clientLinkHub.Add(p.Id, masterID)
 	}
 	// 删除map中数据
-	defer remove(masterID)
+	defer func() {
+		once.Do(func() {
+			remove(masterID)
+		})
+	}()
 
 	// 补充ID，方便分析日志
 	logTag = logTag + ":" + masterID.String()
