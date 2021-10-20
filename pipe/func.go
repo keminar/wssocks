@@ -155,7 +155,8 @@ func makeBuffer() chan buffer {
 	if pipeDebug {
 		return make(chan buffer, 1)
 	}
-	return make(chan buffer, 10)
+	// 减少内存占用
+	return make(chan buffer, 5)
 }
 
 // 打印日志
