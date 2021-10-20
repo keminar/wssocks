@@ -47,7 +47,7 @@ type buffer struct {
 }
 
 // CopyBuffer 传输数据
-func CopyBuffer(pw PipeWriter, conn *net.TCPConn, d *dead, addr string) (written int64, err error) {
+func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, addr string) (written int64, err error) {
 	// 调试函数，方便针对域名输出日志
 	debugPrint := func(args ...interface{}) {
 		if strings.Contains(addr, DebugLogDomain) {
@@ -73,6 +73,10 @@ func CopyBuffer(pw PipeWriter, conn *net.TCPConn, d *dead, addr string) (written
 	buf := make([]byte, size)
 	i := 0
 	for {
+		pw := getWriter(i)
+		if pw == nil {
+			return 0, errors.New("pw not found")
+		}
 		i++
 		s1 := time.Now()
 		conn.SetReadDeadline(time.Now().Add(d.Line))
@@ -137,8 +141,11 @@ func readWithTimeout(b chan buffer, exp time.Duration) (buffer, error) {
 		select {
 		case <-time.After(exp):
 			return buffer{}, errors.New("time out")
-		case data := <-b:
-			return data, nil
+		case data, ok := <-b:
+			if ok {
+				return data, nil
+			}
+			return buffer{}, errors.New("chan closed")
 		}
 	}
 }

@@ -35,7 +35,7 @@ type Connector struct {
 
 // interface of establishing proxy connection with target
 type ProxyEstablish interface {
-	establish(hub *Hub, id ksuid.KSUID, addr string, data []byte) error
+	establish(hub *Hub, id ksuid.KSUID, addr string, data []byte, sorted []ksuid.KSUID) error
 
 	// close connection
 	Close(id ksuid.KSUID) error
@@ -100,11 +100,8 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 				estData = decodedBytes
 			}
 		}
-		//log.Debug("est ", id, " ", proxyEstMsg.Sorted)
-		serverQueueHub.SetSort(id, proxyEstMsg.Sorted)
-		serverLinkHub.SetSort(id, proxyEstMsg.Sorted)
 		// 与外面建立连接，并把外面返回的数据放回websocket
-		go establishProxy(hub, ProxyRegister{id, proxyEstMsg.Addr, estData})
+		go establishProxy(hub, ProxyRegister{id, proxyEstMsg.Addr, estData, proxyEstMsg.Sorted})
 	case WsTpData: //从websocket收到数据发送到外面
 		var requestMsg ProxyData
 		if err := json.Unmarshal(socketData, &requestMsg); err != nil {
@@ -143,7 +140,7 @@ func establishProxy(hub *Hub, proxyMeta ProxyRegister) {
 	var e ProxyEstablish
 	e = &DefaultProxyEst{}
 
-	err := e.establish(hub, proxyMeta.id, proxyMeta.addr, proxyMeta.withData)
+	err := e.establish(hub, proxyMeta.id, proxyMeta.addr, proxyMeta.withData, proxyMeta.sorted)
 	if err != nil {
 		log.Info(fmt.Sprintf("establish %s %s\n", proxyMeta.addr, err.Error()))
 	}
@@ -163,12 +160,12 @@ func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
 	e.status = "closed"
 	//fmt.Println(time.Now(), "close", id)
 	serverLinkHub.RemoveAll(id)
-	serverQueueHub.Remove(id)
+	serverQueueHub.RemoveAll(id)
 	return nil
 }
 
 // data: data send in establish step (can be nil).
-func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data []byte) error {
+func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data []byte, sorted []ksuid.KSUID) error {
 	// 安全检查addr或addr的解析地址不能为私有地址等
 	if checkAddrPrivite(addr) {
 		return errors.New("visit privite network, dial deny")
@@ -189,20 +186,24 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if err != nil {
 		return err
 	}
-
-	// 定义一个超时, 默认是一个较长超时
-	d := pipe.NewDead()
-	//收集请求发送出去
-	serverLinkHub.TrySend(id, conn.(*net.TCPConn))
 	defer func() {
 		conn.Close()
 		e.Close(id)
 	}()
+
+	// 要先执行，初始化数据
+	serverLinkHub.SetSort(id, sorted)
+	//收集请求发送出去到后端
+	serverLinkHub.TrySend(id, conn.(*net.TCPConn))
+	// SetSort后一定会存在
+	link := serverLinkHub.Get(id)
+	if link == nil {
+		return errors.New("link not found")
+	}
+	// 定义一个超时, 默认是一个较长超时
+	d := pipe.NewDead()
 	go func() {
-		link := serverLinkHub.Get(id)
-		if link != nil {
-			link.Wait()
-		}
+		link.Wait()
 		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
 		// 写已经结束，修改读超时为短超时, 因为发现有时发送了closeWrite还是会一直卡住read
 		d.Line = time.Duration(5) * time.Second
@@ -214,27 +215,33 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	hub.addNewProxy(&ProxyServer{Id: id, ProxyIns: e})
 	defer hub.RemoveProxy(id)
 
-	serverQueueHub.TrySend(id)
-	writer := serverQueueHub.Get(id)
-	if writer != nil {
-		go func() {
-			// 从外面往回接收数据
-			_, err := pipe.CopyBuffer(writer, conn.(*net.TCPConn), d, logTag)
-			if err != nil {
-				if strings.Contains(err.Error(), "connection reset by peer") {
-				} else if strings.Contains(err.Error(), "use of closed network connection") {
-				} else {
-					log.Error("copy error: ", err)
-				}
-				// 这里不用告知客户端关闭，统一由establishProxy函数处理
-			}
-			debugPrint(timeNow(), fmt.Sprintf(" %s copy response done err=", logTag), err)
-		}()
+	// 从后端接收数据
+	serverQueueHub.SetSort(id, sorted)
+	back := serverQueueHub.Get(id)
+	if back == nil {
+		return errors.New("queue not found")
 	}
-	//fmt.Println(serverLinkHub.Len(), serverQueueHub.Len())
-	//time.Sleep(time.Minute)
+	back.Read = func() {
+		// 从外面往回接收数据
+		_, err := pipe.CopyBuffer(func(i int) pipe.PipeWriter {
+			pos := i % len(sorted)
+			return serverQueueHub.Get(sorted[pos])
+		}, conn.(*net.TCPConn), d, logTag)
+		if err != nil {
+			if strings.Contains(err.Error(), "connection reset by peer") {
+			} else if strings.Contains(err.Error(), "use of closed network connection") {
+			} else {
+				log.Error("copy error: ", err)
+			}
+			// 这里不用告知客户端关闭，统一由establishProxy函数处理
+		}
+		debugPrint(timeNow(), fmt.Sprintf(" %s get response done err=", logTag), err)
+	}
+	// 务必要写在SetSort调用后面
+	serverQueueHub.TrySend(id)
+
 	//fmt.Println("wait")
-	writer.Wait()
+	back.Wait()
 	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
 	// s.RemoveProxy(proxy.Id)
 	// tellClosed is called outside this func.

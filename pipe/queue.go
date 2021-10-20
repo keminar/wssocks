@@ -4,7 +4,6 @@ package pipe
 
 import (
 	"errors"
-	"io"
 	"sync"
 	"time"
 
@@ -12,23 +11,22 @@ import (
 )
 
 type queue struct {
-	masterID ksuid.KSUID                // 主连接ID
-	buffer   chan buffer                // 写入缓冲区
-	writers  map[ksuid.KSUID]PipeWriter // 每一个连接
-	sorted   []ksuid.KSUID              // 连接发送的顺序
-	status   string                     // 管道状态
-	done     chan struct{}
-	ctime    time.Time // 创建时间
+	buffer  chan buffer                // 写入缓冲区
+	writers map[ksuid.KSUID]PipeWriter // 每一个连接
+	sorted  []ksuid.KSUID              // 连接发送的顺序
+	status  string                     // 管道状态
+	Read    func()                     // 读取数据函数
+	done    chan struct{}
+	ctime   time.Time // 创建时间
 }
 
-func NewQueue(masterID ksuid.KSUID) *queue {
+func NewQueue() *queue {
 	return &queue{
-		masterID: masterID,
-		buffer:   makeBuffer(),
-		writers:  make(map[ksuid.KSUID]PipeWriter),
-		status:   StaWait,
-		done:     make(chan struct{}),
-		ctime:    time.Now(),
+		buffer:  makeBuffer(),
+		writers: make(map[ksuid.KSUID]PipeWriter),
+		status:  StaWait,
+		done:    make(chan struct{}),
+		ctime:   time.Now(),
 	}
 }
 
@@ -71,7 +69,7 @@ func (q *queue) writeBuf(b buffer) (int, error) {
 }
 
 // 从缓冲区读取并发送到各个连接
-func (q *queue) Send() error {
+func (q *queue) Send(hub *QueueHub) error {
 	// 如果已经在发送，返回
 	if q.status == StaSend || q.status == StaDone {
 		return nil
@@ -84,32 +82,46 @@ func (q *queue) Send() error {
 	//log.Warn(time.Now(), " queue start")
 	// 设置为开始发送
 	q.status = StaSend
-	for {
-		// 如果状态已经关闭，则返回
-		if q.status == StaClose {
-			return io.ErrClosedPipe
-		}
-		for _, id := range q.sorted {
-			w := q.writers[id]
-			b, err := readWithTimeout(q.buffer, expFiveMinute)
-			if err != nil {
-				//log.Warn(time.Now(), " queue read timeout ", id)
-				return err
-			}
-			if b.eof {
-				//fmt.Println("queue send eof")
-				w.WriteEOF()
-				//log.Warn(time.Now(), " write eof ", id)
-				return nil
-			}
-			pipePrintln("queue.send to:", id, "data:", string(b.data))
-			_, e := w.Write(b.data)
-			if e != nil {
-				pipePrintln("queue.send write", e.Error())
-				return e
-			}
+
+	done := make(chan error)
+	for id, w := range q.writers {
+		s := hub.Get(id)
+		if s != nil {
+			//只要有一个返回的，整个函数就返回，剩下的chan会被close然后退出
+			go func(w PipeWriter, s *queue, id ksuid.KSUID) {
+				for {
+					// 如果状态已经关闭，则返回
+					if q.status == StaClose {
+						done <- nil
+						return
+					}
+
+					b, err := readWithTimeout(s.buffer, expFiveMinute)
+					if err != nil {
+						pipePrintln("queue read ", err.Error(), " ", id)
+						done <- err
+						return
+					}
+					if b.eof {
+						w.WriteEOF()
+						done <- nil
+						return
+					}
+					pipePrintln("queue.send to:", id, "data:", string(b.data))
+					_, e := w.Write(b.data)
+					if e != nil {
+						pipePrintln("queue.send write", e.Error())
+						done <- e
+						return
+					}
+				}
+			}(w, s, id)
+		} else {
+			pipePrintln(id, "queue.send queue not found")
+			return errors.New("queue not found")
 		}
 	}
+	return <-done
 }
 
 // 堵塞等待
@@ -148,20 +160,31 @@ func (h *QueueHub) Add(masterID ksuid.KSUID, id ksuid.KSUID, w PipeWriter) {
 
 	// 不存在，就先创建
 	if _, ok := h.queue[masterID]; !ok {
-		h.queue[masterID] = NewQueue(masterID)
+		h.queue[masterID] = NewQueue()
 	}
-
 	h.queue[masterID].writers[id] = w
+	if masterID != id { //不能给重置了。
+		h.queue[id] = NewQueue()
+	}
 	h.trySend(masterID)
 }
 
-// 删除写
-func (h *QueueHub) Remove(masterID ksuid.KSUID) {
+// 删除连接
+func (h *QueueHub) RemoveAll(masterID ksuid.KSUID) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	// 存在，就删除
 	if q, ok := h.queue[masterID]; ok {
+		for _, id := range q.sorted {
+			if id == masterID {
+				continue
+			}
+			if c, ok := h.queue[id]; ok {
+				c.close()
+				delete(h.queue, id)
+			}
+		}
 		q.close()
 		delete(h.queue, masterID)
 	}
@@ -184,7 +207,7 @@ func (h *QueueHub) SetSort(masterID ksuid.KSUID, sort []ksuid.KSUID) {
 	if q, ok := h.queue[masterID]; ok {
 		q.SetSort(sort)
 	} else {
-		h.queue[masterID] = NewQueue(masterID)
+		h.queue[masterID] = NewQueue()
 		h.queue[masterID].SetSort(sort)
 	}
 }
@@ -194,7 +217,8 @@ func (h *QueueHub) trySend(masterID ksuid.KSUID) bool {
 	if q, ok := h.queue[masterID]; ok {
 		if len(q.writers) == len(q.sorted) {
 			pipePrintln("queue try", q.sorted)
-			go q.Send()
+			go q.Read()
+			go q.Send(h)
 			return true
 		}
 	}
@@ -207,27 +231,6 @@ func (h *QueueHub) TrySend(masterID ksuid.KSUID) bool {
 	defer h.mu.RUnlock()
 
 	return h.trySend(masterID)
-}
-
-// 删除过期数据
-func (h *QueueHub) TimeoutClose() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	var tmp []ksuid.KSUID
-	for id, queue := range h.queue {
-		if time.Since(queue.ctime) > expHour {
-			pipePrintln("queue.hub timeout", id, queue.ctime.String())
-			tmp = append(tmp, id)
-			if len(tmp) > 100 { //单次最大处理条数
-				break
-			}
-		}
-	}
-	for _, id := range tmp {
-		h.queue[id].close()
-		delete(h.queue, id)
-	}
 }
 
 // 获取数据

@@ -13,7 +13,6 @@ import (
 )
 
 type link struct {
-	master  ksuid.KSUID // 主连接ID，用于反向查找主连接数据
 	buffer  chan buffer // 连接数据缓冲区
 	status  string      // 当前状态
 	done    chan struct{}
@@ -23,9 +22,8 @@ type link struct {
 	ctime   time.Time     // 创建时间
 }
 
-func NewLink(masterID ksuid.KSUID) *link {
+func NewLink() *link {
 	return &link{
-		master:  masterID,
 		buffer:  makeBuffer(),
 		status:  StaWait,
 		done:    make(chan struct{}),
@@ -130,7 +128,7 @@ func (q *link) Wait() {
 }
 
 // 释放资源
-func (q *link) close(id ksuid.KSUID) {
+func (q *link) close() {
 	if q.status == StaClose {
 		return
 	}
@@ -138,10 +136,6 @@ func (q *link) close(id ksuid.KSUID) {
 	if q.buffer != nil {
 		close(q.buffer)
 	}
-	// 是主连接
-	//if id == q.master && q.conn != nil {
-	//	q.conn.Close()
-	//}
 }
 
 type LinkHub struct {
@@ -165,13 +159,13 @@ func (h *LinkHub) Add(id ksuid.KSUID, masterID ksuid.KSUID) {
 	// 先初始化主连接做计数器用
 	m, ok := h.links[masterID]
 	if !ok {
-		h.links[masterID] = NewLink(masterID)
+		h.links[masterID] = NewLink()
 		m = h.links[masterID]
 	}
 
 	// 所有连接
 	if _, ok := h.links[id]; !ok {
-		h.links[id] = NewLink(masterID)
+		h.links[id] = NewLink()
 	}
 	m.counter++
 	h.trySend(masterID, nil)
@@ -189,11 +183,11 @@ func (h *LinkHub) RemoveAll(masterID ksuid.KSUID) {
 				continue
 			}
 			if c, ok := h.links[id]; ok {
-				c.close(id)
+				c.close()
 				delete(h.links, id)
 			}
 		}
-		q.close(masterID)
+		q.close()
 		delete(h.links, masterID)
 	}
 }
@@ -215,7 +209,7 @@ func (h *LinkHub) SetSort(masterID ksuid.KSUID, sort []ksuid.KSUID) {
 	if q, ok := h.links[masterID]; ok {
 		q.SetSort(sort)
 	} else {
-		h.links[masterID] = NewLink(masterID)
+		h.links[masterID] = NewLink()
 		h.links[masterID].SetSort(sort)
 	}
 }
@@ -242,27 +236,6 @@ func (h *LinkHub) TrySend(masterID ksuid.KSUID, conn *net.TCPConn) bool {
 	defer h.mu.RUnlock()
 
 	return h.trySend(masterID, conn)
-}
-
-// 删除过期数据
-func (h *LinkHub) TimeoutClose() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	var tmp []ksuid.KSUID
-	for id, link := range h.links {
-		if time.Since(link.ctime) > expHour {
-			pipePrintln("link.hub timeout", id, link.ctime.String())
-			tmp = append(tmp, id)
-			if len(tmp) > 100 { //单次最大处理条数
-				break
-			}
-		}
-	}
-	for _, id := range tmp {
-		h.links[id].close(id)
-		delete(h.links, id)
-	}
 }
 
 // 获取数据

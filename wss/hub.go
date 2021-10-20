@@ -27,6 +27,7 @@ type ProxyRegister struct {
 	id       ksuid.KSUID
 	addr     string
 	withData []byte
+	sorted   []ksuid.KSUID
 }
 
 func (h *Hub) Close() {

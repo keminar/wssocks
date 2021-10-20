@@ -168,11 +168,15 @@ func (client *Client) localVisit(conn *net.TCPConn, firstSendData []byte, addr s
 			panic(string(firstSendData))
 		}
 		remote.Write(firstSendData)
-		pipe.CopyBuffer(pipe.NewTcp(remote.(*net.TCPConn)), conn, d, addr)
+		pipe.CopyBuffer(func(i int) pipe.PipeWriter {
+			return pipe.NewTcp(remote.(*net.TCPConn))
+		}, conn, d, addr)
 	}()
 	go func() {
 		defer wg.Done()
-		pipe.CopyBuffer(pipe.NewTcp(conn), remote.(*net.TCPConn), d, addr)
+		pipe.CopyBuffer(func(i int) pipe.PipeWriter {
+			return pipe.NewTcp(conn)
+		}, remote.(*net.TCPConn), d, addr)
 	}()
 	wg.Wait()
 	return nil
@@ -191,7 +195,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	var once sync.Once
 	// 单次释放资源，因为client类对多次请求是共享的，所以不能用它的方法实现。这里定义个局部函数
 	remove := func(id ksuid.KSUID) {
-		clientQueueHub.Remove(id)
+		clientQueueHub.RemoveAll(id)
 		clientLinkHub.RemoveAll(id)
 	}
 
@@ -266,22 +270,19 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		return err
 	}
 
-	//发送数据
+	//初始化数据
+	clientQueueHub.SetSort(masterID, sorted)
 	qq := clientQueueHub.Get(masterID)
 	if qq == nil {
 		return errors.New("queue not found")
 	}
-	// 设置发送顺序
-	qq.SetSort(sorted)
-
-	go func() {
-		qq.Send()
-		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
-	}()
-
-	go func() {
+	// 自定义读取函数
+	qq.Read = func() {
 		d := pipe.NewDead()
-		_, err := pipe.CopyBuffer(qq, conn, d, logTag) //io.Copy(qq, conn)
+		_, err := pipe.CopyBuffer(func(i int) pipe.PipeWriter {
+			pos := i % len(sorted)
+			return clientQueueHub.Get(sorted[pos])
+		}, conn, d, logTag)
 		if err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
 				log.Error("copy error: ", err)
@@ -289,26 +290,26 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			// 发送Close给server，只给主连接发送就行
 			masterWsc.TellClose(masterID)
 		}
-		debugPrint(timeNow(), fmt.Sprintf(" %s copy request done err=", logTag), err)
+		debugPrint(timeNow(), fmt.Sprintf(" %s read request done err=", logTag), err)
+	}
+	clientQueueHub.TrySend(masterID)
+	go func() {
+		qq.Wait()
+		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
 	}()
 
+	// 初始化
+	clientLinkHub.SetSort(masterID, sorted)
+	// 接收的数据发送到哪
+	clientLinkHub.TrySend(masterID, conn)
 	//接收数据
-	oo := clientLinkHub.Get(masterID)
-	if oo == nil {
+	back := clientLinkHub.Get(masterID)
+	if back == nil {
 		return errors.New("link not found")
 	}
-	// 设置接收的数据发送到哪
-	oo.SetConn(conn)
-	oo.SetSort(sorted)
-	go func() {
-		oo.Send(clientLinkHub)
-		debugPrint(timeNow(), fmt.Sprintf(" %s get response done\n", logTag))
-	}()
 
-	//fmt.Println(clientLinkHub.Len(), clientQueueHub.Len())
-	//time.Sleep(time.Minute)
 	//fmt.Println("wait")
-	oo.Wait()
+	back.Wait()
 	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
 	return nil
 }
