@@ -295,6 +295,8 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	clientQueueHub.TrySend(masterID)
 	go func() {
 		qq.Wait()
+		// 主队列返回，提前释放其它Queue资源，让chan读结束
+		clientQueueHub.RemoveAll(masterID)
 		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
 	}()
 
