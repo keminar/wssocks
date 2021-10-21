@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/genshen/wssocks/wss"
 	"github.com/sirupsen/logrus"
@@ -13,6 +14,7 @@ import (
 type ProgressLog struct {
 	Writer *Writer // terminal writer  todo defer Flush
 	record *wss.ConnRecord
+	last   int64
 }
 
 func NewPLog(cr *wss.ConnRecord) *ProgressLog {
@@ -20,6 +22,7 @@ func NewPLog(cr *wss.ConnRecord) *ProgressLog {
 		record: cr,
 	}
 	plog.Writer = NewWriter()
+	plog.last = time.Now().Unix() - 1 //首次允许执行
 	return &plog
 }
 
@@ -28,6 +31,10 @@ func NewPLog(cr *wss.ConnRecord) *ProgressLog {
 // (p.Write is a bytes buffer, only really output to screen when calling Flush).
 func (p *ProgressLog) SetLogBuffer(r *wss.ConnRecord) {
 	//return
+	if time.Now().Unix() == p.last { //减少一些并发打印
+		return
+	}
+	p.last = time.Now().Unix()
 	_, terminalRows, err := terminal.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		logrus.Error(err)

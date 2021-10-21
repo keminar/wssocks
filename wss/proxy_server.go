@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/genshen/wssocks/pipe"
+	"github.com/genshen/wssocks/wss/pipe"
 	"github.com/segmentio/ksuid"
 	log "github.com/sirupsen/logrus"
 	"nhooyr.io/websocket"
@@ -221,7 +221,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if back == nil {
 		return errors.New("queue not found")
 	}
-	back.Read = func() {
+	back.ReadData = func() {
 		// 从外面往回接收数据
 		_, err := pipe.CopyBuffer(func(i int) pipe.PipeWriter {
 			pos := i % len(sorted)

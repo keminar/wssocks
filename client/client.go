@@ -229,6 +229,13 @@ func (hdl *Handles) StartClient(c *Options, once *sync.Once) {
 			plog.SetLogBuffer(record) // call Writer.Write() to set log data into buffer
 			plog.Writer.Flush(nil)    // flush buffer
 		}
+
+		go func() { //定时刷新日志
+			for range time.Tick(time.Second) {
+				plog.SetLogBuffer(record)
+				plog.Writer.Flush(nil)
+			}
+		}()
 	} else {
 		record.OnChange = func(status wss.ConnStatus) {
 			if status.IsNew {

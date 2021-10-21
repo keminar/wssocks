@@ -1,71 +1,26 @@
 package pipe
 
-// 将收到的数据先放到buffer，再异步写入多个向外的连接(writer)
-
 import (
 	"errors"
 	"sync"
-	"time"
 
 	"github.com/segmentio/ksuid"
 )
 
 type queue struct {
-	buffer  chan buffer                // 写入缓冲区
-	writers map[ksuid.KSUID]PipeWriter // 每一个连接
-	sorted  []ksuid.KSUID              // 连接发送的顺序
-	status  string                     // 管道状态
-	Read    func()                     // 读取数据函数
-	done    chan struct{}
-	ctime   time.Time // 创建时间
+	stream
+	writers  map[ksuid.KSUID]PipeWriter // 每一个连接
+	ReadData func()                     // 读取数据函数
 }
 
 func NewQueue() *queue {
-	return &queue{
-		buffer:  makeBuffer(),
+	q := &queue{
 		writers: make(map[ksuid.KSUID]PipeWriter),
-		status:  StaWait,
-		done:    make(chan struct{}),
-		ctime:   time.Now(),
 	}
-}
-
-// 设置顺序
-func (q *queue) SetSort(sort []ksuid.KSUID) {
-	q.sorted = sort
-}
-
-// 写入缓冲区
-func (q *queue) Write(data []byte) (n int, err error) {
-	b := make([]byte, len(data))
-	copy(b, data)
-	return q.writeBuf(buffer{eof: false, data: b})
-}
-
-// 发送EOF
-func (q *queue) WriteEOF() {
-	q.writeBuf(buffer{eof: true, data: []byte{}})
-}
-
-// 基础方法
-func (q *queue) writeBuf(b buffer) (int, error) {
-	if q.status == StaDone {
-		return 0, errors.New("send is over")
-	}
-
-	defer func() {
-		// 捕获异常
-		if err := recover(); err != nil {
-			pipePrintln("queue.writer recover", err)
-			return
-		}
-	}()
-	select {
-	case <-time.After(expFiveMinute):
-		return 0, errors.New("write timeout")
-	case q.buffer <- b:
-	}
-	return len(b.data), nil
+	q.buffer = makeBuffer()
+	q.status = StaWait
+	q.done = make(chan struct{})
+	return q
 }
 
 // 从缓冲区读取并发送到各个连接
@@ -83,7 +38,7 @@ func (q *queue) Send(hub *QueueHub) error {
 	// 设置为开始发送
 	q.status = StaSend
 
-	done := make(chan error)
+	ret := make(chan error)
 	for id, w := range q.writers {
 		s := hub.Get(id)
 		if s != nil {
@@ -92,26 +47,26 @@ func (q *queue) Send(hub *QueueHub) error {
 				for {
 					// 如果状态已经关闭，则返回
 					if q.status == StaClose {
-						done <- nil
+						ret <- nil
 						return
 					}
 
 					b, err := readWithTimeout(s.buffer, expFiveMinute)
 					if err != nil {
 						pipePrintln("queue read ", err.Error(), " ", id)
-						done <- err
+						ret <- err
 						return
 					}
 					if b.eof {
 						w.WriteEOF()
-						done <- nil
+						ret <- nil
 						return
 					}
 					pipePrintln("queue.send to:", id, "data:", string(b.data))
 					_, e := w.Write(b.data)
 					if e != nil {
 						pipePrintln("queue.send write", e.Error())
-						done <- e
+						ret <- e
 						return
 					}
 				}
@@ -121,23 +76,7 @@ func (q *queue) Send(hub *QueueHub) error {
 			return errors.New("queue not found")
 		}
 	}
-	return <-done
-}
-
-// 堵塞等待
-func (q *queue) Wait() {
-	<-q.done
-}
-
-// 关闭通道
-func (q *queue) close() {
-	if q.status == StaClose {
-		return
-	}
-	q.status = StaClose
-	if q.buffer != nil {
-		close(q.buffer)
-	}
+	return <-ret
 }
 
 type QueueHub struct {
@@ -217,7 +156,7 @@ func (h *QueueHub) trySend(masterID ksuid.KSUID) bool {
 	if q, ok := h.queue[masterID]; ok {
 		if len(q.writers) == len(q.sorted) {
 			pipePrintln("queue try", q.sorted)
-			go q.Read()
+			go q.ReadData()
 			go q.Send(h)
 			return true
 		}

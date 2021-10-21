@@ -110,7 +110,7 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, ad
 			//多写一个EOF让外层从chan的读取也退出
 			//比如当proxy_server向外面发送了closeWrite后，这边read已经超时退出，但是pipe.Send函数还卡着
 			pw.WriteEOF()
-			err = fmt.Errorf("#3 %s", er.Error())
+			err = fmt.Errorf("#3 %s %s", er.Error(), addr)
 			break
 		}
 	}

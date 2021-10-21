@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/genshen/wssocks/pipe"
+	"github.com/genshen/wssocks/wss/pipe"
 	"github.com/segmentio/ksuid"
 	log "github.com/sirupsen/logrus"
 )
@@ -277,7 +277,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		return errors.New("queue not found")
 	}
 	// 自定义读取函数
-	qq.Read = func() {
+	qq.ReadData = func() {
 		d := pipe.NewDead()
 		_, err := pipe.CopyBuffer(func(i int) pipe.PipeWriter {
 			pos := i % len(sorted)
