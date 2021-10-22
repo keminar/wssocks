@@ -3,6 +3,7 @@ package pipe
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/segmentio/ksuid"
 )
@@ -34,7 +35,7 @@ func (q *queue) Send(hub *QueueHub) error {
 		q.done <- struct{}{}
 		close(q.done)
 	}()
-	//log.Warn(time.Now(), " queue start")
+	pipePrintln(time.Now(), " queue start")
 	// 设置为开始发送
 	q.status = StaSend
 
@@ -51,6 +52,7 @@ func (q *queue) Send(hub *QueueHub) error {
 						return
 					}
 
+					pipePrintln("read start", id)
 					b, err := readWithTimeout(s.buffer, expFiveMinute)
 					if err != nil {
 						pipePrintln("queue read ", err.Error(), " ", id)

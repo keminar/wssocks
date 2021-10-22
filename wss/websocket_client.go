@@ -117,43 +117,45 @@ func (wsc *WebSocketClient) ListenIncomeMsg(readLimit int64) error {
 			return err // todo close websocket
 		}
 
-		var socketData json.RawMessage
-		socketStream := WebSocketMessage{
-			Data: &socketData,
-		}
-		if err := json.Unmarshal(data, &socketStream); err != nil {
-			continue // todo log
-		}
-		// find proxy by id
-		if ksid, err := ksuid.Parse(socketStream.Id); err != nil {
-			continue
-		} else {
-			//fmt.Println("dispatch", ksid, socketStream.Type)
-			if proxy := wsc.GetProxyById(ksid); proxy != nil {
-				// now, we known the id and type of incoming data
-				switch socketStream.Type {
-				case WsTpClose: // remove proxy
-					proxy.onClosed(ksid, false)
-				case WsTpData:
-					var proxyData ProxyData
-					if err := json.Unmarshal(socketData, &proxyData); err != nil {
-						proxy.onError(ksid, err)
-						continue
-					}
-					if decodeBytes, err := base64.StdEncoding.DecodeString(proxyData.DataBase64); err != nil {
-						proxy.onError(ksid, err)
-						continue
-					} else {
-						// 流量统计
-						if proxyData.Tag == TagData {
-							wsc.ConcurrentWebSocket.Download.Add(int64(len(decodeBytes)))
+		go func(data []byte) {
+			var socketData json.RawMessage
+			socketStream := WebSocketMessage{
+				Data: &socketData,
+			}
+			if err := json.Unmarshal(data, &socketStream); err != nil {
+				return // todo log
+			}
+			// find proxy by id
+			if ksid, err := ksuid.Parse(socketStream.Id); err != nil {
+				return
+			} else {
+				//fmt.Println("dispatch", ksid, socketStream.Type)
+				if proxy := wsc.GetProxyById(ksid); proxy != nil {
+					// now, we known the id and type of incoming data
+					switch socketStream.Type {
+					case WsTpClose: // remove proxy
+						proxy.onClosed(ksid, false)
+					case WsTpData:
+						var proxyData ProxyData
+						if err := json.Unmarshal(socketData, &proxyData); err != nil {
+							proxy.onError(ksid, err)
+							return
 						}
-						// just write data back
-						proxy.onData(ksid, ServerData{Tag: proxyData.Tag, Data: decodeBytes})
+						if decodeBytes, err := base64.StdEncoding.DecodeString(proxyData.DataBase64); err != nil {
+							proxy.onError(ksid, err)
+							return
+						} else {
+							// 流量统计
+							if proxyData.Tag == TagData {
+								wsc.ConcurrentWebSocket.Download.Add(int64(len(decodeBytes)))
+							}
+							// just write data back
+							proxy.onData(ksid, ServerData{Tag: proxyData.Tag, Data: decodeBytes})
+						}
 					}
 				}
 			}
-		}
+		}(data)
 	}
 }
 

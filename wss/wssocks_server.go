@@ -62,9 +62,11 @@ func (s *ServerWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Error("error reading webSocket message:", err)
 			break
 		}
-		if err = dispatchMessage(hub, msgType, p, s.config); err != nil {
-			log.Error("error proxy:", err)
-			// break skip error
-		}
+		go func(hub *Hub, msgType websocket.MessageType, data []byte, config WebsocksServerConfig) {
+			if err = dispatchMessage(hub, msgType, data, config); err != nil {
+				log.Error("error proxy:", err)
+				// break skip error
+			}
+		}(hub, msgType, p, s.config)
 	}
 }

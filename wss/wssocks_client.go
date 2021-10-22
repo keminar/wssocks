@@ -110,7 +110,7 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			return fmt.Errorf("tcp accept error: %w", err)
 		}
 
-		go func() {
+		go func(c net.Conn) {
 			conn := c.(*net.TCPConn)
 			// defer c.Close()
 			defer conn.Close()
@@ -147,7 +147,7 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			if err := client.transData(wsc, conn, firstSendData, addr); err != nil {
 				log.Error("trans error: ", err)
 			}
-		}()
+		}(c)
 	}
 }
 
@@ -210,25 +210,32 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			log.Debug(args...)
 		}
 	}
+
 	for i, w := range wsc {
 		// create a with proxy with callback func
 		p := w.NewProxy(func(id ksuid.KSUID, data ServerData) { //ondata 接收数据回调
 			link := clientLinkHub.Get(id)
 			if link == nil {
+				// 已经收到了close后再收到的数据
+				//panic("what?" + id.String() + "?" + logTag)
 				return
 			}
 			if data.Tag == TagData {
+				debugPrint(timeNow(), fmt.Sprintf(" %s receive data %d from server", id, len(data.Data)))
 				link.Write(data.Data)
 			} else if data.Tag == TagEOF {
+				debugPrint(timeNow(), fmt.Sprintf(" %s receive eof from server", id))
 				//fmt.Println("client receive eof")
 				link.WriteEOF()
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
-			debugPrint(timeNow(), fmt.Sprintf(" %s receive close from server\n", logTag))
-			//服务器出错让关闭，关闭双向的通道, 结束wait等待
-			once.Do(func() {
-				remove(id)
-			})
+			debugPrint(timeNow(), fmt.Sprintf(" %s %s receive close from server", id, logTag))
+			//服务器出错让关闭，关闭读，写暂时不关, 并发可能还有在发数据
+			clientQueueHub.RemoveAll(id)
+			/*
+				once.Do(func() {
+					remove(id)
+				})*/
 		}, func(id ksuid.KSUID, err error) { //onerror
 		})
 		defer w.RemoveProxy(p.Id)
@@ -239,6 +246,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			masterID = p.Id
 			masterProxy = p
 		}
+
 		// 给主链接发送的顺序
 		sorted = append(sorted, p.Id)
 		// 让各自连接准备，对方收到后与总连接数对比决定是否开始向外转发
@@ -262,11 +270,11 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 
 	// 补充ID，方便分析日志
 	logTag = logTag + ":" + masterID.String()
-	debugPrint(timeNow(), fmt.Sprintf(" %s start\n", logTag))
+	debugPrint(timeNow(), fmt.Sprintf(" %s start", logTag))
 
 	// 告知服务端目标地址和协议，还有首次发送的数据包, 额外告知有几路以及顺序如何
 	// 第二到N条线路不需要Establish因为不用和目标机器连接
-	if err := masterProxy.Establish(wsc[0], firstSendData, addr, sorted); err != nil {
+	if err := masterProxy.Establish(masterWsc, firstSendData, addr, sorted); err != nil {
 		return err
 	}
 

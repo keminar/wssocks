@@ -26,7 +26,7 @@ var DebugLog bool = true
 var slowTime time.Duration = time.Duration(1) * time.Second
 
 // DebugLogDomain 记录此域名的详细请求日志，在DebugLog为true时生效
-var DebugLogDomain = "oca.nflxvideo.net"
+var DebugLogDomain = ""
 
 // 状态值
 const (
@@ -79,9 +79,10 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, ad
 		}
 		i++
 		s1 := time.Now()
+		debugPrint("read start ", addr, " ", d.Line)
 		conn.SetReadDeadline(time.Now().Add(d.Line))
 		nr, er := conn.Read(buf)
-		debugCompare("read", s1, nr)
+		debugCompare("read done", s1, nr)
 		if nr > 0 {
 			//fmt.Println("copy read", nr)
 			var nw int
@@ -103,7 +104,7 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, ad
 		}
 		if er == io.EOF {
 			// 请求正常结束或客户端curl被ctrl+c断开都能走到这边
-			//fmt.Println(time.Now(), "copy get and write eof")
+			debugPrint(time.Now(), " copy get and write eof")
 			pw.WriteEOF()
 			break
 		} else if er != nil {

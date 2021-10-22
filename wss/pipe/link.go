@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/segmentio/ksuid"
 )
@@ -41,7 +42,7 @@ func (l *link) Send(hub *LinkHub) error {
 		l.done <- struct{}{}
 		close(l.done)
 	}()
-	//log.Warn(time.Now(), " link start")
+	pipePrintln(time.Now(), " link start")
 	// 设置为开始发送
 	l.status = StaSend
 
@@ -53,10 +54,10 @@ func (l *link) Send(hub *LinkHub) error {
 		for _, id := range l.sorted {
 			s := hub.Get(id)
 			if s != nil {
-				//log.Warn(time.Now(), " link read from ", id)
+				pipePrintln(time.Now(), " link read from ", id)
 				b, err := readWithTimeout(s.buffer, expFiveMinute)
 				if err != nil {
-					//log.Warn(time.Now(), " link read timeout ", id)
+					pipePrintln(time.Now(), " link read timeout ", id)
 					return err
 				}
 				pipePrintln("link.send from:", id, "data:", string(b.data))

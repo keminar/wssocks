@@ -129,8 +129,8 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 		} else {
 			//fmt.Println("bytes", id, len(decodeBytes), string(decodeBytes))
 			// 传输数据
-			link.Write(decodeBytes)
-			return nil
+			_, e := link.Write(decodeBytes)
+			return e
 		}
 	}
 	return nil
