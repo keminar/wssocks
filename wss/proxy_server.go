@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/genshen/wssocks/wss/pipe"
@@ -138,7 +139,7 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 
 func establishProxy(hub *Hub, proxyMeta ProxyRegister) {
 	var e ProxyEstablish
-	e = &DefaultProxyEst{}
+	e = &DefaultProxyEst{done: make(chan struct{}), once: sync.Once{}}
 
 	err := e.establish(hub, proxyMeta.id, proxyMeta.addr, proxyMeta.withData, proxyMeta.sorted)
 	if err != nil {
@@ -150,22 +151,30 @@ func establishProxy(hub *Hub, proxyMeta ProxyRegister) {
 
 // interface implementation for socks5 and https proxy.
 type DefaultProxyEst struct {
-	status string
+	once sync.Once
+	conn net.Conn
+	done chan struct{}
 }
 
 func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
-	if e.status == "closed" {
-		return nil
-	}
-	e.status = "closed"
-	//fmt.Println(time.Now(), "close", id)
-	serverLinkHub.RemoveAll(id)
-	serverQueueHub.RemoveAll(id)
+	e.once.Do(func() {
+		close(e.done)
+		if e.conn != nil {
+			e.conn.SetReadDeadline(time.Now())
+		}
+
+		time.Sleep(time.Second)
+		fmt.Println(time.Now(), "close", id)
+		serverLinkHub.RemoveAll(id)
+		serverQueueHub.RemoveAll(id)
+		fmt.Println(time.Now(), "saasdfasf")
+	})
 	return nil
 }
 
 // data: data send in establish step (can be nil).
 func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data []byte, sorted []ksuid.KSUID) error {
+	defer e.Close(id)
 	// 安全检查addr或addr的解析地址不能为私有地址等
 	if checkAddrPrivite(addr) {
 		return errors.New("visit privite network, dial deny")
@@ -186,10 +195,8 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if err != nil {
 		return err
 	}
-	defer func() {
-		conn.Close()
-		e.Close(id)
-	}()
+	defer conn.Close()
+	e.conn = conn
 
 	// 要先执行，初始化数据
 	serverLinkHub.SetSort(id, sorted)
@@ -226,7 +233,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 		_, err := pipe.CopyBuffer(func(i int) pipe.PipeWriter {
 			pos := i % len(sorted)
 			return serverQueueHub.Get(sorted[pos])
-		}, conn.(*net.TCPConn), d, logTag)
+		}, conn.(*net.TCPConn), d, e.done, logTag)
 		if err != nil {
 			if strings.Contains(err.Error(), "connection reset by peer") {
 			} else if strings.Contains(err.Error(), "use of closed network connection") {
@@ -243,7 +250,12 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	//fmt.Println("wait")
 	back.Wait()
 	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
-	// s.RemoveProxy(proxy.Id)
-	// tellClosed is called outside this func.
+
+	// 因为下发数据后，客户端不一定先收到eof还是普通数据，所以要等客户端告知接收完再结束
+	// 超时结束或等客户端上报close
+	select {
+	case <-time.After(time.Duration(60) * time.Second):
+	case <-e.done:
+	}
 	return nil
 }

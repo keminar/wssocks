@@ -47,7 +47,7 @@ type buffer struct {
 }
 
 // CopyBuffer 传输数据
-func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, addr string) (written int64, err error) {
+func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, stop chan struct{}, addr string) (written int64, err error) {
 	// 调试函数，方便针对域名输出日志
 	debugPrint := func(args ...interface{}) {
 		if strings.Contains(addr, DebugLogDomain) {
@@ -73,16 +73,23 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, ad
 	buf := make([]byte, size)
 	i := 0
 	for {
+		// 先检查stop 如果已经被close 不再接收新请求
+		select {
+		case <-stop:
+			return
+		default:
+			// if the channel is still open, continue as normal
+		}
+		s1 := time.Now()
+		//debugPrint("read start ", addr, " ", d.Line)
+		conn.SetReadDeadline(time.Now().Add(d.Line))
+		nr, er := conn.Read(buf)
+		debugCompare("read done", s1, nr)
+
 		pw := getWriter(i)
 		if pw == nil {
 			return 0, errors.New("pw not found")
 		}
-		i++
-		s1 := time.Now()
-		debugPrint("read start ", addr, " ", d.Line)
-		conn.SetReadDeadline(time.Now().Add(d.Line))
-		nr, er := conn.Read(buf)
-		debugCompare("read done", s1, nr)
 		if nr > 0 {
 			//fmt.Println("copy read", nr)
 			var nw int
@@ -98,22 +105,27 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, ad
 				break
 			}
 			if nr != nw {
-				err = fmt.Errorf("#2 %s", io.ErrShortWrite.Error())
+				//panic(ew)
+				// 还没写入，chan被关闭了
+				err = fmt.Errorf("#2 %d!=%d, %s", nr, nw, io.ErrShortWrite.Error())
 				break
 			}
 		}
 		if er == io.EOF {
+			fmt.Println("test1")
 			// 请求正常结束或客户端curl被ctrl+c断开都能走到这边
 			debugPrint(time.Now(), " copy get and write eof")
 			pw.WriteEOF()
 			break
 		} else if er != nil {
+			fmt.Println("test2", er.Error())
 			//多写一个EOF让外层从chan的读取也退出
 			//比如当proxy_server向外面发送了closeWrite后，这边read已经超时退出，但是pipe.Send函数还卡着
 			pw.WriteEOF()
 			err = fmt.Errorf("#3 %s %s", er.Error(), addr)
 			break
 		}
+		i++
 	}
 	return written, err
 }

@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -58,20 +59,24 @@ func (l *link) Send(hub *LinkHub) error {
 				b, err := readWithTimeout(s.buffer, expFiveMinute)
 				if err != nil {
 					pipePrintln(time.Now(), " link read timeout ", id)
+					fmt.Println("lk11111")
 					return err
 				}
 				pipePrintln("link.send from:", id, "data:", string(b.data))
 				_, err = safeWrite(l.conn, b.data, b.eof)
 				if err != nil {
 					pipePrintln("link.send write", err.Error())
+					fmt.Println("lk22222", err.Error())
 					return err
 				}
 				// 已经发送了关闭写，就不要再卡在循环里了
 				if b.eof {
+					fmt.Println("lk33333")
 					return nil
 				}
 			} else {
 				pipePrintln(id, "link.send queue not found")
+				fmt.Println("lk4444")
 				return errors.New("queue not found")
 			}
 		}

@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/segmentio/ksuid"
@@ -21,25 +22,26 @@ func (s *stream) SetSort(sort []ksuid.KSUID) {
 
 // 写入缓冲区
 func (s *stream) Write(data []byte) (n int, err error) {
-	b := make([]byte, len(data))
-	copy(b, data)
-	return s.writeBuf(buffer{eof: false, data: b})
+	tmp := make([]byte, len(data))
+	copy(tmp, data)
+	return s.writeBuf(&buffer{eof: false, data: tmp})
 }
 
 // 发送EOF
 func (s *stream) WriteEOF() {
-	s.writeBuf(buffer{eof: true, data: []byte{}})
+	s.writeBuf(&buffer{eof: true, data: []byte{}})
 }
 
 // 基础方法
-func (s *stream) writeBuf(b buffer) (n int, err error) {
+func (s *stream) writeBuf(b *buffer) (n int, err error) {
 	if s.status == StaDone {
 		return 0, errors.New("send is over")
 	}
-
 	defer func() {
 		// 捕获异常
 		if err := recover(); err != nil {
+			fmt.Println("??????????")
+			// 如果走到这边，函数返回值是0, nil
 			pipePrintln("stream.writer recover", err)
 			return
 		}
@@ -47,7 +49,7 @@ func (s *stream) writeBuf(b buffer) (n int, err error) {
 	select {
 	case <-time.After(expFiveMinute):
 		return 0, errors.New("write timeout")
-	case s.buffer <- b:
+	case s.buffer <- *b:
 	}
 	return len(b.data), nil
 }

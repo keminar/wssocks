@@ -2,8 +2,8 @@ package pipe
 
 import (
 	"errors"
+	"fmt"
 	"sync"
-	"time"
 
 	"github.com/segmentio/ksuid"
 )
@@ -35,7 +35,7 @@ func (q *queue) Send(hub *QueueHub) error {
 		q.done <- struct{}{}
 		close(q.done)
 	}()
-	pipePrintln(time.Now(), " queue start")
+	//pipePrintln(time.Now(), " queue start")
 	// 设置为开始发送
 	q.status = StaSend
 
@@ -48,6 +48,7 @@ func (q *queue) Send(hub *QueueHub) error {
 				for {
 					// 如果状态已经关闭，则返回
 					if q.status == StaClose {
+						fmt.Println("5555", id)
 						ret <- nil
 						return
 					}
@@ -55,11 +56,14 @@ func (q *queue) Send(hub *QueueHub) error {
 					pipePrintln("read start", id)
 					b, err := readWithTimeout(s.buffer, expFiveMinute)
 					if err != nil {
+						//chan closed 或 timeout
 						pipePrintln("queue read ", err.Error(), " ", id)
+						fmt.Println("44444", err.Error(), id)
 						ret <- err
 						return
 					}
 					if b.eof {
+						fmt.Println("eof", id)
 						w.WriteEOF()
 						ret <- nil
 						return
@@ -67,6 +71,7 @@ func (q *queue) Send(hub *QueueHub) error {
 					pipePrintln("queue.send to:", id, "data:", string(b.data))
 					_, e := w.Write(b.data)
 					if e != nil {
+						fmt.Println("3333", id)
 						pipePrintln("queue.send write", e.Error())
 						ret <- e
 						return
@@ -74,6 +79,7 @@ func (q *queue) Send(hub *QueueHub) error {
 				}
 			}(w, s, id)
 		} else {
+			fmt.Println("2222", id)
 			pipePrintln(id, "queue.send queue not found")
 			return errors.New("queue not found")
 		}

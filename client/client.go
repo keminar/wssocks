@@ -219,7 +219,7 @@ func (hdl *Handles) StartClient(c *Options, once *sync.Once) {
 	}()
 
 	record := wss.NewConnRecord(hdl.wsc)
-	if terminal.IsTerminal(int(os.Stdout.Fd())) {
+	if false && terminal.IsTerminal(int(os.Stdout.Fd())) {
 		// if it is tty, use term_view as output, and set onChange function to update output
 		plog := term_view.NewPLog(record)
 		log.SetOutput(plog) // change log stdout to plog

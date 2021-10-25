@@ -159,6 +159,7 @@ func (client *Client) localVisit(conn *net.TCPConn, firstSendData []byte, addr s
 	}
 	defer remote.Close()
 
+	stop := make(chan struct{})
 	d := pipe.NewDead()
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -170,15 +171,16 @@ func (client *Client) localVisit(conn *net.TCPConn, firstSendData []byte, addr s
 		remote.Write(firstSendData)
 		pipe.CopyBuffer(func(i int) pipe.PipeWriter {
 			return pipe.NewTcp(remote.(*net.TCPConn))
-		}, conn, d, addr)
+		}, conn, d, stop, addr)
 	}()
 	go func() {
 		defer wg.Done()
 		pipe.CopyBuffer(func(i int) pipe.PipeWriter {
 			return pipe.NewTcp(conn)
-		}, remote.(*net.TCPConn), d, addr)
+		}, remote.(*net.TCPConn), d, stop, addr)
 	}()
 	wg.Wait()
+	close(stop)
 	return nil
 }
 
@@ -193,8 +195,12 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		panic(string(firstSendData))
 	}
 	var once sync.Once
+	stop := make(chan struct{})
 	// 单次释放资源，因为client类对多次请求是共享的，所以不能用它的方法实现。这里定义个局部函数
 	remove := func(id ksuid.KSUID) {
+		close(stop)
+		conn.SetReadDeadline(time.Now())
+		time.Sleep(time.Second)
 		clientQueueHub.RemoveAll(id)
 		clientLinkHub.RemoveAll(id)
 	}
@@ -211,6 +217,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		}
 	}
 
+	d := pipe.NewDead()
 	for i, w := range wsc {
 		// create a with proxy with callback func
 		p := w.NewProxy(func(id ksuid.KSUID, data ServerData) { //ondata 接收数据回调
@@ -230,12 +237,10 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
 			debugPrint(timeNow(), fmt.Sprintf(" %s %s receive close from server", id, logTag))
-			//服务器出错让关闭，关闭读，写暂时不关, 并发可能还有在发数据
-			clientQueueHub.RemoveAll(id)
-			/*
-				once.Do(func() {
-					remove(id)
-				})*/
+			// 释放资源
+			once.Do(func() {
+				remove(id)
+			})
 		}, func(id ksuid.KSUID, err error) { //onerror
 		})
 		defer w.RemoveProxy(p.Id)
@@ -284,13 +289,12 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	if qq == nil {
 		return errors.New("queue not found")
 	}
-	// 自定义读取函数
+	// 自定义读取函数从浏览器读取并写入buffer
 	qq.ReadData = func() {
-		d := pipe.NewDead()
 		_, err := pipe.CopyBuffer(func(i int) pipe.PipeWriter {
 			pos := i % len(sorted)
 			return clientQueueHub.Get(sorted[pos])
-		}, conn, d, logTag)
+		}, conn, d, stop, logTag)
 		if err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
 				log.Error("copy error: ", err)
@@ -302,10 +306,9 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	}
 	clientQueueHub.TrySend(masterID)
 	go func() {
+		// 正常发送EOF后结束，或者整个transData函数已经退出，chan被关闭
 		qq.Wait()
-		// 主队列返回，提前释放其它Queue资源，让chan读结束
-		clientQueueHub.RemoveAll(masterID)
-		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
+		debugPrint(timeNow(), fmt.Sprintf(" %s send request done", logTag))
 	}()
 
 	// 初始化
@@ -320,6 +323,8 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 
 	//fmt.Println("wait")
 	back.Wait()
+	// 全部数据接收完成,通知服务器交换函数结束
+	masterWsc.TellClose(masterID)
 	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
 	return nil
 }
