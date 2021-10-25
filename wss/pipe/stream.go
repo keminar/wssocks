@@ -46,7 +46,7 @@ func (s *stream) writeBuf(b *buffer) (n int, err error) {
 		}
 	}()
 	select {
-	case <-time.After(expFiveMinute):
+	case <-time.After(bufWriteTimeout):
 		return 0, errors.New("write timeout")
 	case s.buffer <- *b:
 	}

@@ -43,7 +43,6 @@ func (l *link) Send(hub *LinkHub) error {
 		l.done <- struct{}{}
 		close(l.done)
 	}()
-	pipePrintln(timeNow(), l.masterID, "link.send start")
 	// 设置为开始发送
 	l.status = StaSend
 
@@ -56,7 +55,7 @@ func (l *link) Send(hub *LinkHub) error {
 			s := hub.Get(id)
 			if s != nil {
 				pipePrintln(timeNow(), l.masterID, "link.send read from chan", id)
-				b, err := readWithTimeout(s.buffer, expFiveMinute)
+				b, err := readWithTimeout(s.buffer, bufReadTimeout)
 				if err != nil {
 					pipePrintln(timeNow(), l.masterID, "link.send read timeout ", id)
 					return err

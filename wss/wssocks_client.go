@@ -110,7 +110,7 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			return fmt.Errorf("tcp accept error: %w", err)
 		}
 
-		go func(c net.Conn) {
+		run := func(c net.Conn) {
 			conn := c.(*net.TCPConn)
 			// defer c.Close()
 			defer conn.Close()
@@ -147,7 +147,8 @@ func (client *Client) ListenAndServe(record *ConnRecord, wsc []*WebSocketClient,
 			if err := client.transData(wsc, conn, firstSendData, addr); err != nil {
 				log.Error("trans error: ", err)
 			}
-		}(c)
+		}
+		go run(c)
 	}
 }
 

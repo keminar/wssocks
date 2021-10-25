@@ -35,7 +35,6 @@ func (q *queue) Send(hub *QueueHub) error {
 		q.done <- struct{}{}
 		close(q.done)
 	}()
-	pipePrintln(timeNow(), q.masterID, "queue.send start")
 	// 设置为开始发送
 	q.status = StaSend
 
@@ -54,7 +53,7 @@ func (q *queue) Send(hub *QueueHub) error {
 					}
 
 					pipePrintln(timeNow(), q.masterID, "queue.send read from chan", id)
-					b, err := readWithTimeout(s.buffer, expFiveMinute)
+					b, err := readWithTimeout(s.buffer, bufReadTimeout)
 					if err != nil {
 						//chan closed 或 timeout
 						pipePrintln(timeNow(), q.masterID, "queue.send read", err.Error(), id)

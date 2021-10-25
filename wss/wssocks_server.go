@@ -54,6 +54,22 @@ func (s *ServerWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer hub.Close()
 	// read messages from webSocket
 	wc.SetReadLimit(1 << 23) // 8 MiB
+
+	// 通过queue保证在并发时数据会错乱
+	type wsData struct {
+		msgType websocket.MessageType
+		data    []byte
+	}
+	queue := make(chan wsData, 5000)
+	defer close(queue)
+	go func() {
+		for {
+			msg := <-queue
+			if err = dispatchMessage(hub, msg.msgType, msg.data, s.config); err != nil {
+				log.Error("error proxy:", err)
+			}
+		}
+	}()
 	for {
 		msgType, p, err := wc.Read(ctx) // fixme context
 		// if WebSocket is closed by some reason, then this func will return,
@@ -62,11 +78,6 @@ func (s *ServerWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Error("error reading webSocket message:", err)
 			break
 		}
-		go func(hub *Hub, msgType websocket.MessageType, data []byte, config WebsocksServerConfig) {
-			if err = dispatchMessage(hub, msgType, data, config); err != nil {
-				log.Error("error proxy:", err)
-				// break skip error
-			}
-		}(hub, msgType, p, s.config)
+		queue <- wsData{msgType: msgType, data: p}
 	}
 }

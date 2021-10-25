@@ -15,18 +15,17 @@ var pipeDebug bool = true
 //通过设置1k，2k，4k，8k做对比，2k速度最快
 var readSize int = 2048
 
-// chan buffer 长度
+// 每个stream申请的chan buffer 长度
 var bufSize int = 5
 
-// 数据过期时间
-var expHour time.Duration = time.Duration(1) * time.Hour
-var expMinute time.Duration = time.Duration(1) * time.Minute
-var expFiveMinute time.Duration = time.Duration(5) * time.Minute
+// buffer 操作过期时间
+var bufReadTimeout time.Duration = time.Duration(1) * time.Minute
+var bufWriteTimeout time.Duration = time.Duration(5) * time.Second
 
 // DebugLog 是否记录请求关键点位和慢读写日志
 var DebugLog bool = true
 
-// 慢读写的时间
+// 慢读写的时间，在DebugLog为true时生效
 var slowTime time.Duration = time.Duration(1) * time.Second
 
 // DebugLogDomain 记录此域名的详细请求日志，在DebugLog为true时生效
