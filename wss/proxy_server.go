@@ -162,8 +162,6 @@ func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
 		if e.conn != nil {
 			e.conn.SetReadDeadline(time.Now())
 		}
-
-		time.Sleep(time.Second)
 		fmt.Println(timeNow(), id, "close begin")
 		serverLinkHub.RemoveAll(id)
 		serverQueueHub.RemoveAll(id)
