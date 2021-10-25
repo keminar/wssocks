@@ -2,17 +2,17 @@ package pipe
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/segmentio/ksuid"
 )
 
 type stream struct {
-	buffer chan buffer // 连接数据缓冲区
-	status string      // 当前状态
-	done   chan struct{}
-	sorted []ksuid.KSUID // 连接发送的顺序
+	masterID ksuid.KSUID
+	buffer   chan buffer // 连接数据缓冲区
+	status   string      // 当前状态
+	done     chan struct{}
+	sorted   []ksuid.KSUID // 连接发送的顺序
 }
 
 // 设置排序，主连接调用
@@ -40,9 +40,8 @@ func (s *stream) writeBuf(b *buffer) (n int, err error) {
 	defer func() {
 		// 捕获异常
 		if err := recover(); err != nil {
-			fmt.Println("??????????")
 			// 如果走到这边，函数返回值是0, nil
-			pipePrintln("stream.writer recover", err)
+			pipePrintln(timeNow(), s.masterID, "stream.writer recover", err)
 			return
 		}
 	}()

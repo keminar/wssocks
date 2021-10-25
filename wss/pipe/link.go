@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/segmentio/ksuid"
 )
@@ -17,10 +16,11 @@ type link struct {
 	counter int          // 当前为主连接时存储已经收到的连接计数，用于决定是否可以向外发送数据
 }
 
-func NewLink() *link {
+func NewLink(masterID ksuid.KSUID) *link {
 	l := &link{
 		counter: 0,
 	}
+	l.masterID = masterID
 	l.buffer = makeBuffer()
 	l.status = StaWait
 	l.done = make(chan struct{})
@@ -43,7 +43,7 @@ func (l *link) Send(hub *LinkHub) error {
 		l.done <- struct{}{}
 		close(l.done)
 	}()
-	pipePrintln(time.Now(), " link start")
+	pipePrintln(timeNow(), l.masterID, "link.send start")
 	// 设置为开始发送
 	l.status = StaSend
 
@@ -55,28 +55,25 @@ func (l *link) Send(hub *LinkHub) error {
 		for _, id := range l.sorted {
 			s := hub.Get(id)
 			if s != nil {
-				pipePrintln(time.Now(), " link read from ", id)
+				pipePrintln(timeNow(), l.masterID, "link.send read from chan", id)
 				b, err := readWithTimeout(s.buffer, expFiveMinute)
 				if err != nil {
-					pipePrintln(time.Now(), " link read timeout ", id)
-					fmt.Println("lk11111")
+					pipePrintln(timeNow(), l.masterID, "link.send read timeout ", id)
 					return err
 				}
-				pipePrintln("link.send from:", id, "data:", string(b.data))
+				pipePrintln(timeNow(), l.masterID, "link.send write", id, "data:", len(b.data), "eof", b.eof)
 				_, err = safeWrite(l.conn, b.data, b.eof)
 				if err != nil {
-					pipePrintln("link.send write", err.Error())
-					fmt.Println("lk22222", err.Error())
+					pipePrintln(timeNow(), l.masterID, "link.send write", id, err.Error())
 					return err
 				}
 				// 已经发送了关闭写，就不要再卡在循环里了
 				if b.eof {
-					fmt.Println("lk33333")
+					fmt.Println(timeNow(), l.masterID, "link.send eof end", id)
 					return nil
 				}
 			} else {
-				pipePrintln(id, "link.send queue not found")
-				fmt.Println("lk4444")
+				pipePrintln(timeNow(), l.masterID, "link.send queue not found", id)
 				return errors.New("queue not found")
 			}
 		}
@@ -104,13 +101,13 @@ func (h *LinkHub) Add(id ksuid.KSUID, masterID ksuid.KSUID) {
 	// 先初始化主连接做计数器用
 	m, ok := h.links[masterID]
 	if !ok {
-		h.links[masterID] = NewLink()
+		h.links[masterID] = NewLink(masterID)
 		m = h.links[masterID]
 	}
 
 	// 所有连接
 	if _, ok := h.links[id]; !ok {
-		h.links[id] = NewLink()
+		h.links[id] = NewLink(masterID)
 	}
 	m.counter++
 	h.trySend(masterID, nil)
@@ -154,7 +151,7 @@ func (h *LinkHub) SetSort(masterID ksuid.KSUID, sort []ksuid.KSUID) {
 	if q, ok := h.links[masterID]; ok {
 		q.SetSort(sort)
 	} else {
-		h.links[masterID] = NewLink()
+		h.links[masterID] = NewLink(masterID)
 		h.links[masterID].SetSort(sort)
 	}
 }
@@ -167,7 +164,7 @@ func (h *LinkHub) trySend(masterID ksuid.KSUID, conn *net.TCPConn) bool {
 		}
 		//fmt.Println("try", q.conn, q.counter, len(q.sorted))
 		if q.conn != nil && q.counter == len(q.sorted) {
-			pipePrintln("link.hub try", q.sorted, q.conn)
+			pipePrintln(timeNow(), q.masterID, "link.hub try", q.sorted, q.conn)
 			go q.Send(h)
 			return true
 		}

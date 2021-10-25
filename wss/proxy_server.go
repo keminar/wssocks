@@ -164,10 +164,10 @@ func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
 		}
 
 		time.Sleep(time.Second)
-		fmt.Println(time.Now(), "close", id)
+		fmt.Println(timeNow(), id, "close begin")
 		serverLinkHub.RemoveAll(id)
 		serverQueueHub.RemoveAll(id)
-		fmt.Println(time.Now(), "saasdfasf")
+		fmt.Println(timeNow(), id, "close done")
 	})
 	return nil
 }
@@ -179,17 +179,20 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if checkAddrPrivite(addr) {
 		return errors.New("visit privite network, dial deny")
 	}
-	logTag := addr + ":" + id.String()
+	logTag := "none"
+	if strings.Contains(addr, pipe.DebugLogDomain) {
+		logTag = id.String()
+	}
 	// 调试函数，方便针对域名输出日志
 	debugPrint := func(args ...interface{}) {
 		if !pipe.DebugLog {
 			return
 		}
 		if strings.Contains(addr, pipe.DebugLogDomain) {
-			log.Debug(args...)
+			fmt.Println(args...)
 		}
 	}
-	debugPrint(timeNow(), fmt.Sprintf(" %s start\n", logTag))
+	debugPrint(timeNow(), id, addr, "start")
 
 	conn, err := net.DialTimeout("tcp", addr, time.Second*8) // todo config timeout
 	if err != nil {
@@ -211,7 +214,7 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	d := pipe.NewDead()
 	go func() {
 		link.Wait()
-		debugPrint(timeNow(), fmt.Sprintf(" %s send request done\n", logTag))
+		debugPrint(timeNow(), id, "send request done")
 		// 写已经结束，修改读超时为短超时, 因为发现有时发送了closeWrite还是会一直卡住read
 		d.Line = time.Duration(5) * time.Second
 		// 马上执行一次，让当前卡住的读也用短超时
@@ -242,14 +245,14 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 			}
 			// 这里不用告知客户端关闭，统一由establishProxy函数处理
 		}
-		debugPrint(timeNow(), fmt.Sprintf(" %s get response done err=", logTag), err)
+		debugPrint(timeNow(), id, "get response done err=", err)
 	}
 	// 务必要写在SetSort调用后面
 	serverQueueHub.TrySend(id)
 
 	//fmt.Println("wait")
 	back.Wait()
-	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
+	debugPrint(timeNow(), id, "all done")
 
 	// 因为下发数据后，客户端不一定先收到eof还是普通数据，所以要等客户端告知接收完再结束
 	// 超时结束或等客户端上报close

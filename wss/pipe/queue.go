@@ -2,7 +2,6 @@ package pipe
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/segmentio/ksuid"
@@ -14,10 +13,11 @@ type queue struct {
 	ReadData func()                     // 读取数据函数
 }
 
-func NewQueue() *queue {
+func NewQueue(masterID ksuid.KSUID) *queue {
 	q := &queue{
 		writers: make(map[ksuid.KSUID]PipeWriter),
 	}
+	q.masterID = masterID
 	q.buffer = makeBuffer()
 	q.status = StaWait
 	q.done = make(chan struct{})
@@ -35,7 +35,7 @@ func (q *queue) Send(hub *QueueHub) error {
 		q.done <- struct{}{}
 		close(q.done)
 	}()
-	//pipePrintln(time.Now(), " queue start")
+	pipePrintln(timeNow(), q.masterID, "queue.send start")
 	// 设置为开始发送
 	q.status = StaSend
 
@@ -48,39 +48,37 @@ func (q *queue) Send(hub *QueueHub) error {
 				for {
 					// 如果状态已经关闭，则返回
 					if q.status == StaClose {
-						fmt.Println("5555", id)
+						pipePrintln(timeNow(), q.masterID, "queue.send status is closed", id)
 						ret <- nil
 						return
 					}
 
-					pipePrintln("read start", id)
+					pipePrintln(timeNow(), q.masterID, "queue.send read from chan", id)
 					b, err := readWithTimeout(s.buffer, expFiveMinute)
 					if err != nil {
 						//chan closed 或 timeout
-						pipePrintln("queue read ", err.Error(), " ", id)
-						fmt.Println("44444", err.Error(), id)
+						pipePrintln(timeNow(), q.masterID, "queue.send read", err.Error(), id)
 						ret <- err
 						return
 					}
+
+					pipePrintln(timeNow(), q.masterID, "queue.send write", id, "data:", len(b.data), "eof", b.eof)
 					if b.eof {
-						fmt.Println("eof", id)
+						pipePrintln(timeNow(), q.masterID, "queue.send write", id, "write eof end")
 						w.WriteEOF()
 						ret <- nil
 						return
 					}
-					pipePrintln("queue.send to:", id, "data:", string(b.data))
 					_, e := w.Write(b.data)
 					if e != nil {
-						fmt.Println("3333", id)
-						pipePrintln("queue.send write", e.Error())
+						pipePrintln(timeNow(), q.masterID, "queue.send write", id, e.Error())
 						ret <- e
 						return
 					}
 				}
 			}(w, s, id)
 		} else {
-			fmt.Println("2222", id)
-			pipePrintln(id, "queue.send queue not found")
+			pipePrintln(timeNow(), q.masterID, "queue.send queue not found", id)
 			return errors.New("queue not found")
 		}
 	}
@@ -107,11 +105,11 @@ func (h *QueueHub) Add(masterID ksuid.KSUID, id ksuid.KSUID, w PipeWriter) {
 
 	// 不存在，就先创建
 	if _, ok := h.queue[masterID]; !ok {
-		h.queue[masterID] = NewQueue()
+		h.queue[masterID] = NewQueue(masterID)
 	}
 	h.queue[masterID].writers[id] = w
 	if masterID != id { //不能给重置了。
-		h.queue[id] = NewQueue()
+		h.queue[id] = NewQueue(masterID)
 	}
 	h.trySend(masterID)
 }
@@ -154,7 +152,7 @@ func (h *QueueHub) SetSort(masterID ksuid.KSUID, sort []ksuid.KSUID) {
 	if q, ok := h.queue[masterID]; ok {
 		q.SetSort(sort)
 	} else {
-		h.queue[masterID] = NewQueue()
+		h.queue[masterID] = NewQueue(masterID)
 		h.queue[masterID].SetSort(sort)
 	}
 }
@@ -163,7 +161,7 @@ func (h *QueueHub) SetSort(masterID ksuid.KSUID, sort []ksuid.KSUID) {
 func (h *QueueHub) trySend(masterID ksuid.KSUID) bool {
 	if q, ok := h.queue[masterID]; ok {
 		if len(q.writers) == len(q.sorted) {
-			pipePrintln("queue try", q.sorted)
+			pipePrintln(timeNow(), q.masterID, "queue.hub try", q.sorted)
 			go q.ReadData()
 			go q.Send(h)
 			return true

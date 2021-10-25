@@ -5,14 +5,18 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"time"
-
-	log "github.com/sirupsen/logrus"
 )
 
 // 是否打开调试日志
-var pipeDebug bool = false
+var pipeDebug bool = true
+
+//如果设置过大会耗内存高
+//通过设置1k，2k，4k，8k做对比，2k速度最快
+var readSize int = 2048
+
+// chan buffer 长度
+var bufSize int = 5
 
 // 数据过期时间
 var expHour time.Duration = time.Duration(1) * time.Hour
@@ -47,30 +51,21 @@ type buffer struct {
 }
 
 // CopyBuffer 传输数据
-func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, stop chan struct{}, addr string) (written int64, err error) {
+func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, stop chan struct{}, logTag string) (written int64, err error) {
 	// 调试函数，方便针对域名输出日志
 	debugPrint := func(args ...interface{}) {
-		if strings.Contains(addr, DebugLogDomain) {
-			log.Debug(args...)
+		if DebugLog && logTag != "none" {
+			fmt.Println(args...)
 		}
 	}
 	// 比较有没有达到记录日志条件
 	debugCompare := func(action string, s1 time.Time, nr int) {
-		if !DebugLog {
-			return
-		}
 		diff := time.Since(s1)
 		if diff > slowTime {
-			debugPrint(time.Now().Format(time.RFC3339Nano), fmt.Sprintf(" %s %s %d cost ", addr, action, nr), diff)
+			debugPrint(timeNow(), fmt.Sprintf("%s %s %d cost", logTag, action, nr), diff)
 		}
 	}
-	//如果设置过大会耗内存高
-	//通过设置1k，2k，4k，8k做对比，2k速度最快
-	size := 2 * 1024
-	if pipeDebug {
-		size = 10 //临时测试
-	}
-	buf := make([]byte, size)
+	buf := make([]byte, readSize)
 	i := 0
 	for {
 		// 先检查stop 如果已经被close 不再接收新请求
@@ -107,22 +102,22 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, st
 			if nr != nw {
 				//panic(ew)
 				// 还没写入，chan被关闭了
-				err = fmt.Errorf("#2 %d!=%d, %s", nr, nw, io.ErrShortWrite.Error())
+				err = fmt.Errorf("#2 %d!=%d, may be chan close , %s", nr, nw, io.ErrShortWrite.Error())
 				break
 			}
 		}
 		if er == io.EOF {
-			fmt.Println("test1")
 			// 请求正常结束或客户端curl被ctrl+c断开都能走到这边
-			debugPrint(time.Now(), " copy get and write eof")
+			debugPrint(timeNow(), logTag, "copy get and write eof")
 			pw.WriteEOF()
 			break
 		} else if er != nil {
-			fmt.Println("test2", er.Error())
+			//如 read: connection reset by peer
+			debugPrint(timeNow(), logTag, "read error", er.Error())
 			//多写一个EOF让外层从chan的读取也退出
 			//比如当proxy_server向外面发送了closeWrite后，这边read已经超时退出，但是pipe.Send函数还卡着
 			pw.WriteEOF()
-			err = fmt.Errorf("#3 %s %s", er.Error(), addr)
+			err = fmt.Errorf("#3 %s", er.Error())
 			break
 		}
 		i++
@@ -165,11 +160,7 @@ func readWithTimeout(b chan buffer, exp time.Duration) (buffer, error) {
 
 // 创建缓冲区
 func makeBuffer() chan buffer {
-	if pipeDebug {
-		return make(chan buffer, 1)
-	}
-	// 减少内存占用
-	return make(chan buffer, 5)
+	return make(chan buffer, bufSize)
 }
 
 // 打印日志
@@ -178,4 +169,8 @@ func pipePrintln(a ...interface{}) (n int, err error) {
 		return 0, nil
 	}
 	return fmt.Println(a...)
+}
+
+func timeNow() string {
+	return time.Now().Format(time.RFC3339Nano)
 }

@@ -205,15 +205,13 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		clientLinkHub.RemoveAll(id)
 	}
 
-	// 前置定义，为了在onclosed回调时也能用
-	logTag := addr
 	// 调试函数，方便针对域名输出日志
 	debugPrint := func(args ...interface{}) {
 		if !pipe.DebugLog {
 			return
 		}
 		if strings.Contains(addr, pipe.DebugLogDomain) {
-			log.Debug(args...)
+			fmt.Println(args...)
 		}
 	}
 
@@ -224,19 +222,19 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 			link := clientLinkHub.Get(id)
 			if link == nil {
 				// 已经收到了close后再收到的数据
-				//panic("what?" + id.String() + "?" + logTag)
+				debugPrint(timeNow(), masterID, "link is nil", id)
 				return
 			}
 			if data.Tag == TagData {
-				debugPrint(timeNow(), fmt.Sprintf(" %s receive data %d from server", id, len(data.Data)))
+				debugPrint(timeNow(), masterID, fmt.Sprintf("%s receive data %d from server", id, len(data.Data)))
 				link.Write(data.Data)
 			} else if data.Tag == TagEOF {
-				debugPrint(timeNow(), fmt.Sprintf(" %s receive eof from server", id))
+				debugPrint(timeNow(), masterID, fmt.Sprintf("%s receive eof from server", id))
 				//fmt.Println("client receive eof")
 				link.WriteEOF()
 			}
 		}, func(id ksuid.KSUID, tell bool) { //onclosed 只有主连接会调到
-			debugPrint(timeNow(), fmt.Sprintf(" %s %s receive close from server", id, logTag))
+			debugPrint(timeNow(), masterID, fmt.Sprintf("%s receive close from server", id))
 			// 释放资源
 			once.Do(func() {
 				remove(id)
@@ -274,8 +272,11 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	}()
 
 	// 补充ID，方便分析日志
-	logTag = logTag + ":" + masterID.String()
-	debugPrint(timeNow(), fmt.Sprintf(" %s start", logTag))
+	logTag := "none"
+	if strings.Contains(addr, pipe.DebugLogDomain) {
+		logTag = masterID.String()
+	}
+	debugPrint(timeNow(), masterID, addr, "start")
 
 	// 告知服务端目标地址和协议，还有首次发送的数据包, 额外告知有几路以及顺序如何
 	// 第二到N条线路不需要Establish因为不用和目标机器连接
@@ -283,6 +284,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 		return err
 	}
 
+	debugPrint(timeNow(), sorted)
 	//初始化数据
 	clientQueueHub.SetSort(masterID, sorted)
 	qq := clientQueueHub.Get(masterID)
@@ -300,15 +302,15 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 				log.Error("copy error: ", err)
 			}
 			// 发送Close给server，只给主连接发送就行
-			masterWsc.TellClose(masterID)
+			//masterWsc.TellClose(masterID)
 		}
-		debugPrint(timeNow(), fmt.Sprintf(" %s read request done err=", logTag), err)
+		debugPrint(timeNow(), masterID, "read request done err=", err)
 	}
 	clientQueueHub.TrySend(masterID)
 	go func() {
 		// 正常发送EOF后结束，或者整个transData函数已经退出，chan被关闭
 		qq.Wait()
-		debugPrint(timeNow(), fmt.Sprintf(" %s send request done", logTag))
+		debugPrint(timeNow(), masterID, "send request done")
 	}()
 
 	// 初始化
@@ -325,7 +327,7 @@ func (client *Client) transData(wsc []*WebSocketClient, conn *net.TCPConn, first
 	back.Wait()
 	// 全部数据接收完成,通知服务器交换函数结束
 	masterWsc.TellClose(masterID)
-	debugPrint(timeNow(), fmt.Sprintf(" %s all done\n", logTag))
+	debugPrint(timeNow(), masterID, "all done")
 	return nil
 }
 
