@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/genshen/wssocks/wss/pipe"
@@ -75,7 +74,10 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 	switch socketStream.Type {
 	case WsTpBeats: // heart beats
 	case WsTpClose: // closed by client
-		return hub.CloseProxyConn(id)
+		//让link.Wait执行
+		serverLinkHub.RemoveAll(id)
+		return nil
+		//return hub.CloseProxyConn(id)
 	case WsTpHi:
 		var masterID ksuid.KSUID
 		if err := json.Unmarshal(socketData, &masterID); err != nil {
@@ -131,6 +133,10 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 			//fmt.Println("bytes", id, len(decodeBytes), string(decodeBytes))
 			// 传输数据
 			_, e := link.Write(decodeBytes)
+			if e != nil {
+				//写入buffer出错，使其结束
+				serverLinkHub.RemoveAll(link.MasterID)
+			}
 			return e
 		}
 	}
@@ -139,7 +145,7 @@ func dispatchDataMessage(hub *Hub, data []byte, config WebsocksServerConfig) err
 
 func establishProxy(hub *Hub, proxyMeta ProxyRegister) {
 	var e ProxyEstablish
-	e = &DefaultProxyEst{done: make(chan struct{}), once: sync.Once{}}
+	e = &DefaultProxyEst{}
 
 	err := e.establish(hub, proxyMeta.id, proxyMeta.addr, proxyMeta.withData, proxyMeta.sorted)
 	if err != nil {
@@ -151,28 +157,17 @@ func establishProxy(hub *Hub, proxyMeta ProxyRegister) {
 
 // interface implementation for socks5 and https proxy.
 type DefaultProxyEst struct {
-	once sync.Once
-	conn net.Conn
-	done chan struct{}
 }
 
 func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
-	e.once.Do(func() {
-		close(e.done)
-		if e.conn != nil {
-			e.conn.SetReadDeadline(time.Now())
-		}
-		fmt.Println(timeNow(), id, "close begin")
-		serverLinkHub.RemoveAll(id)
-		serverQueueHub.RemoveAll(id)
-		fmt.Println(timeNow(), id, "close done")
-	})
 	return nil
 }
 
 // data: data send in establish step (can be nil).
 func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data []byte, sorted []ksuid.KSUID) error {
-	defer e.Close(id)
+	defer func() {
+		serverQueueHub.RemoveAll(id)
+	}()
 	// 安全检查addr或addr的解析地址不能为私有地址等
 	if checkAddrPrivite(addr) {
 		return errors.New("visit privite network, dial deny")
@@ -197,12 +192,12 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 		return err
 	}
 	defer conn.Close()
-	e.conn = conn
+	tcpConn := conn.(*net.TCPConn)
 
 	// 要先执行，初始化数据
 	serverLinkHub.SetSort(id, sorted)
-	//收集请求发送出去到后端
-	serverLinkHub.TrySend(id, conn.(*net.TCPConn))
+	// 客户端请求收集，发送到后端
+	serverLinkHub.TrySend(id, tcpConn)
 	// SetSort后一定会存在
 	link := serverLinkHub.Get(id)
 	if link == nil {
@@ -216,7 +211,9 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 		// 写已经结束，修改读超时为短超时, 因为发现有时发送了closeWrite还是会一直卡住read
 		d.Line = time.Duration(5) * time.Second
 		// 马上执行一次，让当前卡住的读也用短超时
-		conn.SetReadDeadline(time.Now().Add(d.Line))
+		tcpConn.SetReadDeadline(time.Now().Add(d.Line))
+		// 确保发送关闭写请求
+		tcpConn.CloseWrite()
 	}()
 
 	// todo check exists
@@ -229,12 +226,13 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 	if back == nil {
 		return errors.New("queue not found")
 	}
+	readDone := make(chan struct{}, 1)
 	back.ReadData = func() {
 		// 从外面往回接收数据
 		_, err := pipe.CopyBuffer(func(i int) pipe.PipeWriter {
 			pos := i % len(sorted)
 			return serverQueueHub.Get(sorted[pos])
-		}, conn.(*net.TCPConn), d, e.done, logTag)
+		}, tcpConn, d, logTag)
 		if err != nil {
 			if strings.Contains(err.Error(), "connection reset by peer") {
 			} else if strings.Contains(err.Error(), "use of closed network connection") {
@@ -244,19 +242,15 @@ func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data 
 			// 这里不用告知客户端关闭，统一由establishProxy函数处理
 		}
 		debugPrint(timeNow(), id, "get response done err=", err)
+		readDone <- struct{}{}
 	}
 	// 务必要写在SetSort调用后面
 	serverQueueHub.TrySend(id)
 
 	//fmt.Println("wait")
 	back.Wait()
+	//确保读取函数已经退出，后面再清理queue时就不会导致panic了
+	<-readDone
 	debugPrint(timeNow(), id, "all done")
-
-	// 因为下发数据后，客户端不一定先收到eof还是普通数据，所以要等客户端告知接收完再结束
-	// 超时结束或等客户端上报close
-	select {
-	case <-time.After(time.Duration(60) * time.Second):
-	case <-e.done:
-	}
 	return nil
 }

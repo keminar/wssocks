@@ -17,7 +17,7 @@ func NewQueue(masterID ksuid.KSUID) *queue {
 	q := &queue{
 		writers: make(map[ksuid.KSUID]PipeWriter),
 	}
-	q.masterID = masterID
+	q.MasterID = masterID
 	q.buffer = makeBuffer()
 	q.status = StaWait
 	q.done = make(chan struct{})
@@ -47,37 +47,37 @@ func (q *queue) Send(hub *QueueHub) error {
 				for {
 					// 如果状态已经关闭，则返回
 					if q.status == StaClose {
-						pipePrintln(timeNow(), q.masterID, "queue.send status is closed", id)
+						pipePrintln(timeNow(), q.MasterID, "queue.send status is closed", id)
 						ret <- nil
 						return
 					}
 
-					pipePrintln(timeNow(), q.masterID, "queue.send read from chan", id)
+					pipePrintln(timeNow(), q.MasterID, "queue.send read from chan", id)
 					b, err := readWithTimeout(s.buffer, bufReadTimeout)
 					if err != nil {
 						//chan closed 或 timeout
-						pipePrintln(timeNow(), q.masterID, "queue.send read", err.Error(), id)
+						pipePrintln(timeNow(), q.MasterID, "queue.send read", err.Error(), id)
 						ret <- err
 						return
 					}
 
-					pipePrintln(timeNow(), q.masterID, "queue.send write", id, "data:", len(b.data), "eof", b.eof)
+					pipePrintln(timeNow(), q.MasterID, "queue.send write", id, "data:", len(b.data), "eof", b.eof)
 					if b.eof {
-						pipePrintln(timeNow(), q.masterID, "queue.send write", id, "write eof end")
+						pipePrintln(timeNow(), q.MasterID, "queue.send write", id, "write eof end")
 						w.WriteEOF()
 						ret <- nil
 						return
 					}
 					_, e := w.Write(b.data)
 					if e != nil {
-						pipePrintln(timeNow(), q.masterID, "queue.send write", id, e.Error())
+						pipePrintln(timeNow(), q.MasterID, "queue.send write", id, e.Error())
 						ret <- e
 						return
 					}
 				}
 			}(w, s, id)
 		} else {
-			pipePrintln(timeNow(), q.masterID, "queue.send queue not found", id)
+			pipePrintln(timeNow(), q.MasterID, "queue.send queue not found", id)
 			return errors.New("queue not found")
 		}
 	}
@@ -160,7 +160,7 @@ func (h *QueueHub) SetSort(masterID ksuid.KSUID, sort []ksuid.KSUID) {
 func (h *QueueHub) trySend(masterID ksuid.KSUID) bool {
 	if q, ok := h.queue[masterID]; ok {
 		if len(q.writers) == len(q.sorted) {
-			pipePrintln(timeNow(), q.masterID, "queue.hub try", q.sorted)
+			pipePrintln(timeNow(), q.MasterID, "queue.hub try", q.sorted)
 			go q.ReadData()
 			go q.Send(h)
 			return true

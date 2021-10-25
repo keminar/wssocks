@@ -9,21 +9,21 @@ import (
 )
 
 // 是否打开调试日志
-var pipeDebug bool = true
+var pipeDebug bool = false
 
 //如果设置过大会耗内存高
 //通过设置1k，2k，4k，8k做对比，2k速度最快
 var readSize int = 2048
 
-// 每个stream申请的chan buffer 长度
-var bufSize int = 5
+// 每个stream申请的chan buffer 长度，太小会容易堵塞
+var bufSize int = 10
 
 // buffer 操作过期时间
 var bufReadTimeout time.Duration = time.Duration(1) * time.Minute
 var bufWriteTimeout time.Duration = time.Duration(5) * time.Second
 
 // DebugLog 是否记录请求关键点位和慢读写日志
-var DebugLog bool = true
+var DebugLog bool = false
 
 // 慢读写的时间，在DebugLog为true时生效
 var slowTime time.Duration = time.Duration(1) * time.Second
@@ -50,7 +50,7 @@ type buffer struct {
 }
 
 // CopyBuffer 传输数据
-func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, stop chan struct{}, logTag string) (written int64, err error) {
+func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, logTag string) (written int64, err error) {
 	// 调试函数，方便针对域名输出日志
 	debugPrint := func(args ...interface{}) {
 		if DebugLog && logTag != "none" {
@@ -67,13 +67,6 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, st
 	buf := make([]byte, readSize)
 	i := 0
 	for {
-		// 先检查stop 如果已经被close 不再接收新请求
-		select {
-		case <-stop:
-			return
-		default:
-			// if the channel is still open, continue as normal
-		}
 		s1 := time.Now()
 		//debugPrint("read start ", addr, " ", d.Line)
 		conn.SetReadDeadline(time.Now().Add(d.Line))
@@ -127,7 +120,8 @@ func CopyBuffer(getWriter func(i int) PipeWriter, conn *net.TCPConn, d *dead, st
 // 带保护写，防止conn变nil时退出
 func safeWrite(conn *net.TCPConn, data []byte, closeWrite bool) (n int, err error) {
 	defer func() {
-		if err := recover(); err != nil {
+		if e := recover(); e != nil {
+			err = errors.New("err from recover")
 			return
 		}
 	}()
@@ -147,7 +141,7 @@ func readWithTimeout(b chan buffer, exp time.Duration) (buffer, error) {
 	for {
 		select {
 		case <-time.After(exp):
-			return buffer{}, errors.New("time out")
+			return buffer{}, errors.New("chan read time out")
 		case data, ok := <-b:
 			if ok {
 				return data, nil

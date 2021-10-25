@@ -8,7 +8,7 @@ import (
 )
 
 type stream struct {
-	masterID ksuid.KSUID
+	MasterID ksuid.KSUID
 	buffer   chan buffer // 连接数据缓冲区
 	status   string      // 当前状态
 	done     chan struct{}
@@ -39,9 +39,10 @@ func (s *stream) writeBuf(b *buffer) (n int, err error) {
 	}
 	defer func() {
 		// 捕获异常
-		if err := recover(); err != nil {
+		if e := recover(); e != nil {
 			// 如果走到这边，函数返回值是0, nil
-			pipePrintln(timeNow(), s.masterID, "stream.writer recover", err)
+			pipePrintln(timeNow(), s.MasterID, "stream.writer recover", err)
+			err = errors.New("stream.writer recover")
 			return
 		}
 	}()

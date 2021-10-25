@@ -2,7 +2,6 @@ package pipe
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -20,7 +19,7 @@ func NewLink(masterID ksuid.KSUID) *link {
 	l := &link{
 		counter: 0,
 	}
-	l.masterID = masterID
+	l.MasterID = masterID
 	l.buffer = makeBuffer()
 	l.status = StaWait
 	l.done = make(chan struct{})
@@ -54,25 +53,25 @@ func (l *link) Send(hub *LinkHub) error {
 		for _, id := range l.sorted {
 			s := hub.Get(id)
 			if s != nil {
-				pipePrintln(timeNow(), l.masterID, "link.send read from chan", id)
+				pipePrintln(timeNow(), l.MasterID, "link.send read from chan", id)
 				b, err := readWithTimeout(s.buffer, bufReadTimeout)
 				if err != nil {
-					pipePrintln(timeNow(), l.masterID, "link.send read timeout ", id)
+					pipePrintln(timeNow(), l.MasterID, "link.send read timeout ", id)
 					return err
 				}
-				pipePrintln(timeNow(), l.masterID, "link.send write", id, "data:", len(b.data), "eof", b.eof)
+				pipePrintln(timeNow(), l.MasterID, "link.send write", id, "data:", len(b.data), "eof", b.eof)
 				_, err = safeWrite(l.conn, b.data, b.eof)
 				if err != nil {
-					pipePrintln(timeNow(), l.masterID, "link.send write", id, err.Error())
+					pipePrintln(timeNow(), l.MasterID, "link.send write", id, err.Error())
 					return err
 				}
 				// 已经发送了关闭写，就不要再卡在循环里了
 				if b.eof {
-					fmt.Println(timeNow(), l.masterID, "link.send eof end", id)
+					pipePrintln(timeNow(), l.MasterID, "link.send eof end", id)
 					return nil
 				}
 			} else {
-				pipePrintln(timeNow(), l.masterID, "link.send queue not found", id)
+				pipePrintln(timeNow(), l.MasterID, "link.send queue not found", id)
 				return errors.New("queue not found")
 			}
 		}
@@ -163,7 +162,7 @@ func (h *LinkHub) trySend(masterID ksuid.KSUID, conn *net.TCPConn) bool {
 		}
 		//fmt.Println("try", q.conn, q.counter, len(q.sorted))
 		if q.conn != nil && q.counter == len(q.sorted) {
-			pipePrintln(timeNow(), q.masterID, "link.hub try", q.sorted, q.conn)
+			pipePrintln(timeNow(), q.MasterID, "link.hub try", q.sorted, q.conn)
 			go q.Send(h)
 			return true
 		}
