@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/genshen/wssocks/wss/pipe"
+
 	"github.com/genshen/cmds"
 	_ "github.com/genshen/wssocks/cmd/server/statik"
 	"github.com/genshen/wssocks/wss"
@@ -36,6 +38,7 @@ func init() {
 	serverCommand.FlagSet.StringVar(&s.tlsCertFile, "tls-cert-file", "", "path of certificate file if HTTPS/tls is enabled.")
 	serverCommand.FlagSet.StringVar(&s.tlsKeyFile, "tls-key-file", "", "path of private key file if HTTPS/tls is enabled.")
 	serverCommand.FlagSet.BoolVar(&s.status, "status", false, `enable/disable service status page.`)
+	serverCommand.FlagSet.StringVar(&s.log, "log", "normal", `how to display log(normal, more, large).`)
 	serverCommand.FlagSet.Usage = serverCommand.Usage // use default usage provided by cmds.Command.
 
 	serverCommand.Runner = &s
@@ -52,6 +55,7 @@ type server struct {
 	tlsCertFile string // path of certificate file if HTTPS/tls is enabled.
 	tlsKeyFile  string // path of private key file if HTTPS/tls is enabled.
 	status      bool   // enable service status page
+	log         string
 }
 
 func genRandBytes(n int) ([]byte, error) {
@@ -84,6 +88,7 @@ func (s *server) PreRun() error {
 	if !strings.HasSuffix(s.wsBasePath, "/") {
 		s.wsBasePath = s.wsBasePath + "/"
 	}
+	pipe.SetLog(s.log)
 	return nil
 }
 

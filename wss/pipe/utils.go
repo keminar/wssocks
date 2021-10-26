@@ -16,7 +16,7 @@ var pipeDebug bool = false
 var readSize int = 2048
 
 // 每个stream申请的chan buffer 长度，太小会容易堵塞
-var bufSize int = 10
+var bufSize int = 1000
 
 // buffer 操作过期时间
 var bufReadTimeout time.Duration = time.Duration(1) * time.Minute
@@ -47,6 +47,15 @@ type PipeWriter interface {
 type buffer struct {
 	eof  bool
 	data []byte
+}
+
+func SetLog(log string) {
+	if log == "more" || log == "large" {
+		DebugLog = true
+	}
+	if log == "large" {
+		pipeDebug = true
+	}
 }
 
 // CopyBuffer 传输数据

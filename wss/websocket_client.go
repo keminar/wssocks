@@ -103,7 +103,7 @@ func (wsc *WebSocketClient) ListenIncomeMsg(readLimit int64) error {
 	wsc.WsConn.SetReadLimit(readLimit)
 
 	// 通过queue保证在并发时数据会错乱
-	queue := make(chan []byte, 5000)
+	queue := make(chan []byte, 50000)
 	defer close(queue)
 	go func() {
 		for {

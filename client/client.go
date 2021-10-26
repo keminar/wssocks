@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/genshen/wssocks/wss/pipe"
+
 	"github.com/genshen/wssocks/wss"
 	"github.com/genshen/wssocks/wss/term_view"
 	log "github.com/sirupsen/logrus"
@@ -49,6 +51,7 @@ type Options struct {
 	ConnectNum      int         // 同时连接数
 	ConnectionKey   string      // connection key for authentication
 	SkipTLSVerify   bool        // skip TSL verify
+	Log             string      // how to display log
 }
 
 type Handles struct {
@@ -219,7 +222,7 @@ func (hdl *Handles) StartClient(c *Options, once *sync.Once) {
 	}()
 
 	record := wss.NewConnRecord(hdl.wsc)
-	if false && terminal.IsTerminal(int(os.Stdout.Fd())) {
+	if c.Log == "view" && terminal.IsTerminal(int(os.Stdout.Fd())) {
 		// if it is tty, use term_view as output, and set onChange function to update output
 		plog := term_view.NewPLog(record)
 		log.SetOutput(plog) // change log stdout to plog
@@ -237,6 +240,7 @@ func (hdl *Handles) StartClient(c *Options, once *sync.Once) {
 			}
 		}()
 	} else {
+		pipe.SetLog(c.Log)
 		record.OnChange = func(status wss.ConnStatus) {
 			if status.IsNew {
 				log.WithField("address", status.Address).Traceln("new proxy connection")

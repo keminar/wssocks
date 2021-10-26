@@ -60,7 +60,7 @@ func (s *ServerWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		msgType websocket.MessageType
 		data    []byte
 	}
-	queue := make(chan wsData, 5000)
+	queue := make(chan wsData, 50000)
 	defer close(queue)
 	go func() {
 		for {

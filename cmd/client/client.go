@@ -48,7 +48,7 @@ func init() {
 	clientCommand.FlagSet.Var(&client.headers, "ws-header", `list of user defined http headers in websocket request. 
 (e.g: --ws-header "X-Custom-Header=some-value" --ws-header "X-Second-Header=another-value")`)
 	clientCommand.FlagSet.BoolVar(&client.skipTLSVerify, "skip-tls-verify", false, `skip verification of the server's certificate chain and host name.`)
-
+	clientCommand.FlagSet.StringVar(&client.log, "log", "view", `how to display log(view, normal, more, large).`)
 	clientCommand.FlagSet.Usage = clientCommand.Usage // use default usage provided by cmds.Command.
 	clientCommand.Runner = &client
 
@@ -64,6 +64,7 @@ type client struct {
 	remoteHeaders http.Header // parsed websocket headers (not presented in flag).
 	key           string
 	skipTLSVerify bool
+	log           string
 }
 
 func (c *client) PreRun() error {
@@ -107,6 +108,7 @@ func (c *client) Run() error {
 		ConnectNum:      c.connectNum,
 		ConnectionKey:   c.key,
 		SkipTLSVerify:   c.skipTLSVerify,
+		Log:             c.log,
 	}
 	hdl := cl.NewClientHandles()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute) // fixme
