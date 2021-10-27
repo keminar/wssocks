@@ -167,6 +167,7 @@ func (e *DefaultProxyEst) Close(id ksuid.KSUID) error {
 func (e *DefaultProxyEst) establish(hub *Hub, id ksuid.KSUID, addr string, data []byte, sorted []ksuid.KSUID) error {
 	defer func() {
 		serverQueueHub.RemoveAll(id)
+		serverLinkHub.RemoveAll(id)
 	}()
 	// 安全检查addr或addr的解析地址不能为私有地址等
 	if checkAddrPrivite(addr) {
