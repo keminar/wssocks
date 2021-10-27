@@ -64,7 +64,10 @@ func (s *ServerWS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer close(queue)
 	go func() {
 		for {
-			msg := <-queue
+			msg, ok := <-queue
+			if !ok { // 外面连接断开，chan已经关闭
+				return
+			}
 			if err = dispatchMessage(hub, msg.msgType, msg.data, s.config); err != nil {
 				log.Error("error proxy:", err)
 			}

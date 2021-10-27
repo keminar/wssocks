@@ -9,6 +9,8 @@ import (
 
 	"github.com/genshen/wssocks/wss/pipe"
 
+	_ "net/http/pprof"
+
 	"github.com/genshen/cmds"
 	_ "github.com/genshen/wssocks/cmd/server/statik"
 	"github.com/genshen/wssocks/wss"
@@ -93,6 +95,11 @@ func (s *server) PreRun() error {
 }
 
 func (s *server) Run() error {
+	//http://127.0.0.1:5001/debug/pprof/
+	//go func() {
+	//	http.ListenAndServe(":5001", nil)
+	//}()
+
 	config := wss.WebsocksServerConfig{EnableHttp: s.http, EnableConnKey: s.authEnable, ConnKey: s.authKey, EnableStatusPage: s.status}
 	hc := wss.NewHubCollection()
 
